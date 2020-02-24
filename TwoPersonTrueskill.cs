@@ -53,6 +53,9 @@ namespace ts.core
             foreach (var playerSkill in orderedPlayerSkills)
             {
                 Console.WriteLine($"Player {playerSkill.Player} skill mean: {playerSkill.Skill.GetMean():F5}, variance: {playerSkill.Skill.GetVariance():F5}");
+                
+                // update player skill priors with an additive dynamics factor
+                playerSkills[playerSkill.Player] = Variable.GaussianFromMeanAndVariance(playerSkill.Skill.GetMean(), playerSkill.Skill.GetVariance() + Math.Pow(SkillDynamicsFactor, 2));
             }
         }
     }
