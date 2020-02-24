@@ -13,13 +13,18 @@ namespace ts.core
         private const double SkillClassWidth = SkillDeviation / 2; // β
         private const double SkillDynamicsFactor = SkillDeviation / 100; // τ or γ
 
+        private const double DrawProbability = 0.1;
+
         internal static void RunExample(int[] winnerData, int[] loserData)
         {
+            // Calculate draw margin
+            var drawMargin = Gaussian.FromMeanAndVariance(0, 1).GetQuantile((DrawProbability + 1.0) / 2.0) * Math.Sqrt(2) * SkillClassWidth;
+            
             // Define the statistical model as a probabilistic program
             var game = new Range(winnerData.Length).Named("Game");
             var player = new Range(winnerData.Concat(loserData).Max() + 1).Named("Player");
             var playerSkills = Variable.Array<double>(player).Named("PlayerSkills");
-            playerSkills[player] = Variable.GaussianFromMeanAndVariance(SkillMean, SkillDeviation * SkillDeviation + SkillDynamicsFactor * SkillDynamicsFactor).ForEach(player).Named("PlayerSkill");
+            playerSkills[player] = Variable.GaussianFromMeanAndVariance(SkillMean, Math.Pow(SkillDeviation, 2) + Math.Pow(SkillDynamicsFactor, 2)).ForEach(player).Named("PlayerSkill");
 
             var winners = Variable.Array<int>(game).Named("Winners");
             var losers = Variable.Array<int>(game).Named("Losers");
@@ -27,11 +32,11 @@ namespace ts.core
             using (Variable.ForEach(game))
             {
                 // The player performance is a noisy version of their skill
-                var winnerPerformance = Variable.GaussianFromMeanAndVariance(playerSkills[winners[game]], SkillClassWidth * SkillClassWidth).Named("WinnerPerformance");
-                var loserPerformance = Variable.GaussianFromMeanAndVariance(playerSkills[losers[game]], SkillClassWidth * SkillClassWidth).Named("LoserPerformance");
+                var winnerPerformance = Variable.GaussianFromMeanAndVariance(playerSkills[winners[game]], Math.Pow(SkillClassWidth, 2)).Named("WinnerPerformance");
+                var loserPerformance = Variable.GaussianFromMeanAndVariance(playerSkills[losers[game]], Math.Pow(SkillClassWidth, 2)).Named("LoserPerformance");
 
                 // The winner performed better in this game
-                Variable.ConstrainTrue((winnerPerformance > loserPerformance).Named("IsWinnerHigher"));
+                Variable.ConstrainTrue((winnerPerformance - loserPerformance > drawMargin).Named("IsWinnerHigher"));
             }
 
             // Attach the data to the model
@@ -40,7 +45,6 @@ namespace ts.core
 
             // Run inference
             var inferenceEngine = new InferenceEngine {ShowFactorGraph = false, Algorithm = new ExpectationPropagation()};
-            
             var inferredSkills = inferenceEngine.Infer<Gaussian[]>(playerSkills);
 
             // The inferred skills are uncertain, which is captured in their variance
@@ -48,7 +52,7 @@ namespace ts.core
 
             foreach (var playerSkill in orderedPlayerSkills)
             {
-                Console.WriteLine($"Player {playerSkill.Player} skill: {playerSkill.Skill}");
+                Console.WriteLine($"Player {playerSkill.Player} skill mean: {playerSkill.Skill.GetMean():F5}, variance: {playerSkill.Skill.GetVariance():F5}");
             }
         }
     }
