@@ -50,13 +50,17 @@ namespace ts.core
             // The inferred skills are uncertain, which is captured in their variance
             var orderedPlayerSkills = inferredSkills.Select((s, i) => new {Player = i, Skill = s}).OrderByDescending(ps => ps.Skill.GetMean());
 
+            var updatedPlayerSkillPriors = Variable.Array<double>(player);
             foreach (var playerSkill in orderedPlayerSkills)
             {
                 Console.WriteLine($"Player {playerSkill.Player} skill mean: {playerSkill.Skill.GetMean():F5}, variance: {playerSkill.Skill.GetVariance():F5}");
                 
                 // update player skill priors with an additive dynamics factor
-                playerSkills[playerSkill.Player] = Variable.GaussianFromMeanAndVariance(playerSkill.Skill.GetMean(), playerSkill.Skill.GetVariance() + Math.Pow(SkillDynamicsFactor, 2));
+                updatedPlayerSkillPriors[playerSkill.Player] = Variable.GaussianFromMeanAndVariance(playerSkill.Skill.GetMean(), playerSkill.Skill.GetVariance() + Math.Pow(SkillDynamicsFactor, 2));
             }
+
+            playerSkills = updatedPlayerSkillPriors;
+
         }
     }
 }
