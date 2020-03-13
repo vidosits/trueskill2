@@ -1,17 +1,20 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using Microsoft.ML.Probabilistic;
 using Microsoft.ML.Probabilistic.Algorithms;
 using Microsoft.ML.Probabilistic.Distributions;
 using Microsoft.ML.Probabilistic.Models;
+using Microsoft.ML.Probabilistic.Models.Attributes;
 
 namespace ts.core
 {
     public static class TwoTeamTrueskill
     {
-        private const double SkillMean = 25.0; // μ
-        private const double SkillDeviation = SkillMean / 3; // σ
+        public const double SkillMean = 25.0; // μ
+        public const double SkillDeviation = SkillMean / 3; // σ
         private const double SkillClassWidth = SkillDeviation / 2; // β
-        private const double SkillDynamicsFactor = SkillDeviation / 100; // τ or γ
+        public const double SkillDynamicsFactor = SkillDeviation / 100; // τ or γ
 
         private const double DrawProbability = 0.1;
 
@@ -27,7 +30,8 @@ namespace ts.core
             var playerSkillPriors = Variable.Array(Variable.Array<double>(player), team).Named("PlayerSkills");
 
             // initialize player skills with a Gaussian prior
-            playerSkillPriors[team][player] = Variable.GaussianFromMeanAndVariance(SkillMean, Math.Pow(SkillDeviation, 2) + Math.Pow(SkillDynamicsFactor, 2)).ForEach(team, player).Named("PlayerSkill");
+            playerSkillPriors[team][player] =
+                Variable.GaussianFromMeanAndVariance(SkillMean, Math.Pow(SkillDeviation, 2) + Math.Pow(SkillDynamicsFactor, 2)).ForEach(team, player).Named("PlayerSkill");
 
             var winners = Variable.Array<int>(game).Named("Winners");
             var losers = Variable.Array<int>(game).Named("Losers");
@@ -77,6 +81,57 @@ namespace ts.core
             }
 
             playerSkillPriors = updatedPriors;
+        }
+
+        public static IEnumerable<Gaussian[][]> Run(IEnumerable<Gaussian[][]> priors, int[] winnerData, int[] loserData)
+        {
+            // Define the game, team, player ranges and playerSkills 2d jagged array
+            var game = new Range(winnerData.Length).Named("Game");
+            var team = new Range(2).Named("Team");
+            var player = new Range(5).Named("Player");
+            var playerSkillPriors = Variable.Array(Variable.Array(Variable.Array<double>(player), team), game).Named("PlayerSkills");
+
+            // initialize player skills with a Gaussian prior
+            foreach (var (gameIndex, gamePriors) in priors.Enumerate())
+            {
+                foreach (var (teamIndex, teamPriors) in gamePriors.Enumerate())
+                {
+                    foreach (var (playerIndex, playerPrior) in teamPriors.Enumerate())
+                    {
+                        playerSkillPriors[gameIndex][teamIndex][playerIndex] = Variable.Random(playerPrior).Named("PlayerSkill");
+                    }
+                }
+            }
+            
+            var winners = Variable.Array<int>(game).Named("Winners");
+            var losers = Variable.Array<int>(game).Named("Losers");
+
+            using (Variable.ForEach(game))
+            {
+                var playerPerformance = Variable.Array(Variable.Array<double>(player), team);
+
+                // The player performance is a noisy version of their skill
+                playerPerformance[team][player] = Variable.GaussianFromMeanAndVariance(playerSkillPriors[game][team][player], Math.Pow(SkillClassWidth, 2)).Named("PlayerPerformance");
+                
+                // The winner performed better in this game
+                var teamPerformance = Variable.Array<double>(team);
+                teamPerformance[team] = Variable.Sum(playerPerformance[team]);
+
+                Variable.ConstrainTrue(
+                    (teamPerformance[winners[game]].Named(("Winning team performance")) > teamPerformance[losers[game]].Named("Losing team performance")));
+            }
+
+            // Attach the data to the model
+            winners.ObservedValue = winnerData;
+            losers.ObservedValue = loserData;
+
+            // Run inference
+            var inferenceEngine = new InferenceEngine {ShowFactorGraph = false, Algorithm = new ExpectationPropagation(), NumberOfIterations = 10};
+            
+            var inferredSkills = inferenceEngine.Infer<Gaussian[][][]>(playerSkillPriors);
+            
+            // return updated priors / inferred skills
+            return inferredSkills;
         }
     }
 }

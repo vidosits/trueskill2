@@ -51,6 +51,8 @@ namespace ts.core
             {
                 Console.WriteLine($"Player {playerSkill.Player} skill: {playerSkill.Skill}");
             }
+            
+            
         }
     }
 }
