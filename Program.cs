@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -98,7 +99,7 @@ namespace ts.core
             }
         }
         
-        private static List<Match> ReadMatchesFromFile(string fileName)
+        private static IEnumerable<Match> ReadMatchesFromFile(string fileName)
         {
             using (var r = new StreamReader(fileName))
             {
@@ -128,14 +129,47 @@ namespace ts.core
 
         private static void Main()
         {
-            // TwoCoins.RunExample();
-            // BasicTrueskill.RunExample(new[] { 0, 0, 0, 1, 3, 4 }, new[] { 1, 3, 4, 2, 1, 2 });
-            // TwoPersonTrueskill.RunExample(new[] { 0 }, new[] { 1 });
-            // TrueskillThroughTime.RunExample();
-            // TwoTeamTrueskill.RunExample(new int[][] {new int[] {0, 1, 2, 3, 4}, new int[] {5, 6, 7, 8, 9}}, new [] {0}, new[] {1});
-            // RunTwoTeamTrueSkill(ReadMatchesFromFile("/mnt/win/Andris/Work/WIN/trueskill/ts.core/dota2_ts2_matches.json"));
-
-
+            var matches = ReadMatchesFromFile("/mnt/win/Andris/Work/WIN/trueskill/ts.core/sorted_dota2_ts2.json");
+            
+            // define variable keeping track of player skills
+            var playerRating = new Dictionary<long, Gaussian>();
+            
+            // enumerate through all matches
+            foreach (var (matchIndex, match) in matches.Enumerate())
+            {
+                // make sure each player has a prior
+                foreach (var player in match.radiant.Union(match.dire))
+                {
+                    if (!playerRating.ContainsKey(player.steam_id.Value))
+                    {
+                        playerRating[player.steam_id.Value] = Gaussian.FromMeanAndVariance(Trueskill2.SkillMean, Math.Pow(Trueskill2.SkillDeviation, 2));
+                    }
+                }
+            
+                // define the players in a match
+                var matchPlayers = new long[2][] {match.radiant.Select(player => player.steam_id.Value).ToArray(), match.dire.Select(player => player.steam_id.Value).ToArray()};
+                
+                // use the current skill level of players as the prior for their skill
+                var matchPriors = new Gaussian[][]
+                {
+                    match.radiant.Select(player => playerRating[player.steam_id.Value]).ToArray(),
+                    match.dire.Select(player => playerRating[player.steam_id.Value]).ToArray()
+                };
+            
+                
+                // do the online update for player priors with TS2
+                var updatedPriors = Trueskill2.RunOnline(matchPriors, match.radiant_win ? 0 : 1, match.radiant_win ? 1 : 0).ToArray();
+                
+                // update the player skills
+                foreach (var (teamIndex, teamSkills) in updatedPriors.Enumerate())
+                {
+                    foreach (var (playerIndex, playerSkill) in teamSkills.Enumerate())
+                    {
+                        playerRating[matchPlayers[teamIndex][playerIndex]] = playerSkill;
+                    }
+                }
+                
+            }
         }
     }
 }
