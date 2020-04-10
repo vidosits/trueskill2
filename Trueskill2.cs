@@ -25,9 +25,8 @@ namespace ts.core
         private const double DeathWeightPlayerOpponentPerformance = 1;
         private const double DeathCountVariance = 1;
 
-        public static IEnumerable<Gaussian[]> Run(Gaussian[] priors, int[][][] playerMatches, double[][] playerElapsedDays, int[] gameCountsPerPlayer, double[] matchLength, double[][][] killCounts,
-            bool[][][] killMissing, double[][][] deathCounts, bool[][][] deathMissing, int[] winnerIndex,
-            int[] loserIndex)
+        public static IEnumerable<Gaussian[]> Run(Gaussian[] priors, int[][][] playerMatches, double[][] playerElapsedDays, int[] gameCountsPerPlayer, int[][] gameMapping, double[] matchLength, double[][][] killCounts,
+            bool[][][] killMissing, double[][][] deathCounts, bool[][][] deathMissing, int[] winnerIndex, int[] loserIndex)
         {
             // Defaults
             var zero = Variable.Observed(0.0).Named("zero");
@@ -49,6 +48,9 @@ namespace ts.core
             // This array is used to hold the value of the total number of games played by this player in this current batch.
             // This number can be used to create the 2D jagged array holding the skills of the player over time.
             var playerGameCounts = Variable.Observed(gameCountsPerPlayer, allPlayers).Named("playerGameCounts");
+
+            // This array is used to hold the mapping between the index (m) of the m-th game in the batch and the index of the same game for the n-th player in the skills array  
+            var playerGameMapping = Variable.Observed(gameMapping, allPlayers, nGames).Named("playerGameMapping");
 
             // This range is used to access the 2d jagged array (because players play different amount of games in the batch) holding the player skills
             var gameCounts = new Range(playerGameCounts[allPlayers]).Named("gameCounts");
@@ -80,7 +82,7 @@ namespace ts.core
                     }
                 }
             }
-            
+
             // Initialize arrays holding Kill, Death and Match Length information
             var matchLengths = Variable.Observed(matchLength, nGames).Named("matchLengths");
             var killCount = Variable.Observed(killCounts, nGames, nTeamsPerGame, nPlayersPerTeam).Named("killCount");
@@ -97,8 +99,10 @@ namespace ts.core
                 {
                     using (Variable.ForEach(nPlayersPerTeam))
                     {
+                        var playerIndex = matches[nGames][nTeamsPerGame][nPlayersPerTeam].Named("playerIndex");
+                        var gameIndex = playerGameMapping[playerIndex][nGames];
                         playerPerformance[nTeamsPerGame][nPlayersPerTeam] =
-                            Variable.GaussianFromMeanAndVariance(skills[matches[nGames][nTeamsPerGame][nPlayersPerTeam]][nGames], Math.Pow(SkillClassWidth, 2))
+                            Variable.GaussianFromMeanAndVariance(skills[playerIndex][gameIndex], Math.Pow(SkillClassWidth, 2))
                                 .Named("playerPerformanceInNthGameInIthTeam");
                     }
 

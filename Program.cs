@@ -108,7 +108,7 @@ namespace ts.core
                 Console.Write("Reading matches from file...");
                 var matchesByDate = JsonConvert.DeserializeObject<Dictionary<string, List<Match>>>(r.ReadToEnd());
                 Console.WriteLine("OK.");
-                
+
                 // set up matches as a chronological list
                 Console.Write("Setting up chronological match order...");
                 var matches = new List<Match>();
@@ -158,17 +158,11 @@ namespace ts.core
                 // holds the amount of time that has passed for the m-th player in n-th game since the last time that player has played, index order of this array is [n][m] / [game][player]  
                 var batchPlayerTimeLapse = new List<List<double>>();
 
-                // holds a lookup table used for figuring out which game was the last (in this batch) that the  n-th player has participated w.r.t. the m-th game / [player][game]
-                var batchPlayerLastPlayed = new List<int[]>();
-                
-                // hold the value whether the n-th player has played in the m-th game of the batch / [player][game]
-                var batchHasPlayerPlayedInGame = new List<bool[]>();
-                
-                // holds the index of the last game (w.r.t. this batch) that the player has played in
-                var batchPlayerLastSeen = new Dictionary<long, int>();
-
                 // holds the amount of games the ith player (w.r.t. the priors array) has played in this batch of games
                 var gameCountsPerPlayer = new List<int>();
+
+                // holds the mapping between the batch index of a game and the j-th player's skill in that game
+                var gameMapping = new List<int[]>();
 
                 // holds the length of each match in this batch
                 var matchLength = new double[batchSize];
@@ -196,15 +190,14 @@ namespace ts.core
                     var teams = new[] {match.radiant, match.dire};
                     foreach (var player in match.radiant.Union(match.dire))
                     {
-                        // index of the player among all the unique players that have appear at least once in this batch
-                        var pIndex = -1;
-                        
                         // if this is the first time that we've ever seen this player, initialize his/her global skill with the prior
                         if (!playerSkill.ContainsKey(player.steam_id.Value))
                         {
                             playerSkill[player.steam_id.Value] = Gaussian.FromMeanAndVariance(TwoTeamTrueskill.SkillMean, Math.Pow(TwoTeamTrueskill.SkillDeviation, 2));
                             globalPlayerLastPlayed[player.steam_id.Value] = match.date;
                         }
+
+                        int pIndex;
 
                         // check if this player has not already appeared in this batch 
                         if (!steamIdToIndex.ContainsKey(player.steam_id.Value))
@@ -219,42 +212,30 @@ namespace ts.core
 
                             // init the number of games played in current batch
                             gameCountsPerPlayer.Add(1);
-                            
-                            // add player to batchPlayerLastSeen
-                            batchPlayerLastSeen[player.steam_id.Value] = 0;
-                            
-                            // add player to batchHasPlayerPlayedInGame
-                            batchHasPlayerPlayedInGame.Add(new bool[batchSize]);
-                            
-                            // add player to batchPlayerLastPlayed
-                            batchPlayerLastPlayed.Add(new int[batchSize]);
 
                             // set the time elapsed since the last time this player has played
                             batchPlayerTimeLapse.Add(new List<double>() {(match.date - globalPlayerLastPlayed[player.steam_id.Value]).Days});
+
+                            // set up the array that will hold the mapping between the i-th game and the players' games
+                            gameMapping.Add(new int[batchSize]);
                         }
                         else
                         {
-                            // set pIndex
+                            // index of the player among all the unique players that have appear at least once in this batchset pIndex
                             pIndex = steamIdToIndex[player.steam_id.Value];
-                            
+
                             // increase the number of games played in the current batch by the current player
                             gameCountsPerPlayer[pIndex] += 1;
-                            
+
                             // update batchPlayerTimeLapse, so that we can tell how much time has passed (in days) since the last time this player has played  
                             batchPlayerTimeLapse[pIndex].Add((match.date - globalPlayerLastPlayed[player.steam_id.Value]).Days);
                         }
-                        
-                        // update batchHasPlayerPlayedInGame
-                        batchHasPlayerPlayedInGame[pIndex][matchIndex] = true;
-                            
-                        // update to batchPlayerLastPlayed
-                        batchPlayerLastPlayed[pIndex][matchIndex] = batchPlayerLastSeen[player.steam_id.Value];
-                        
+
+                        // set up the mapping between the game index and the player's games 
+                        gameMapping[pIndex][matchIndex] = gameCountsPerPlayer[pIndex] - 1;
+
                         // update the date of the last played match for the player
                         globalPlayerLastPlayed[player.steam_id.Value] = match.date;
-                        
-                        // update batchPlayerLastPlayed, so that we can tell the index of the match which was the last time this player has played in the current batch
-                        batchPlayerLastSeen[player.steam_id.Value] = matchIndex;
                     }
 
                     // set playerIndex
@@ -277,13 +258,13 @@ namespace ts.core
                     // set loserIndex
                     loserIndex[matchIndex] = match.radiant_win ? 1 : 0;
                 }
-                
+
                 // process this batch with TS2
-                var inferredSkills = Trueskill2.Run(priors.ToArray(), playerIndex, batchPlayerTimeLapse.Select(Enumerable.ToArray).ToArray(),
-                    gameCountsPerPlayer.ToArray(), matchLength, killCounts, killCountMissing, deathCounts, deathCountMissing, winnerIndex, loserIndex);
-                    
+                var inferredSkills = Trueskill2.Run(priors.ToArray(), playerIndex, batchPlayerTimeLapse.Select(Enumerable.ToArray).ToArray(), gameCountsPerPlayer.ToArray(),
+                    gameMapping.ToArray(), matchLength, killCounts, killCountMissing, deathCounts, deathCountMissing, winnerIndex, loserIndex);
+
                 // update the priors for the players in this batch
-                foreach(var (i, skillOverTime) in inferredSkills.Enumerate())
+                foreach (var (i, skillOverTime) in inferredSkills.Enumerate())
                 {
                     playerSkill[indexToSteamId[i]] = skillOverTime.Last();
                 }
