@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.ML.Probabilistic.Algorithms;
+using Microsoft.ML.Probabilistic.Compiler.CodeModel;
 using Microsoft.ML.Probabilistic.Distributions;
+using Microsoft.ML.Probabilistic.Factors;
 using Microsoft.ML.Probabilistic.Models;
 
 namespace ts.core
@@ -23,84 +25,130 @@ namespace ts.core
         private const double DeathWeightPlayerOpponentPerformance = 1;
         private const double DeathCountVariance = 1;
 
-        public static IEnumerable<Gaussian[]> RunOnline(Gaussian[][] priors, int[][] playerElapsedDays, double matchLength, double[][] killCounts, double[][] deathCounts, int winnerIndex,
-            int loserIndex)
+        public static IEnumerable<Gaussian[]> Run(Gaussian[] priors, int[][][] playerMatches, double[][] playerElapsedDays, int[] gameCountsPerPlayer, double[] matchLength, double[][][] killCounts,
+            bool[][][] killMissing, double[][][] deathCounts, bool[][][] deathMissing, int[] winnerIndex,
+            int[] loserIndex)
         {
-            var team = new Range(2).Named("Team");
-            var player = new Range(5).Named("Player");
-            var playerSkillPriors = Variable.Array(Variable.Array<double>(player), team).Named("PlayerSkillPrior");
+            // Defaults
+            var zero = Variable.Observed(0.0).Named("zero");
 
-            // initialize player skills with a Gaussian prior
+            // Ranges to loop through the data: [games][teams][players]
+            var allPlayers = new Range(priors.Length).Named("allPlayers");
+            var nGames = new Range(winnerIndex.Length).Named("nGames");
+            var nPlayersPerTeam = new Range(5).Named("nPlayersPerTeam");
+            var nTeamsPerGame = new Range(2).Named("nTeamsPerGame");
+            var teamSize = Variable.Observed(5.0).Named("teamSize");
 
-            foreach (var (teamIndex, teamPriors) in priors.Enumerate())
-            foreach (var (playerIndex, playerPrior) in teamPriors.Enumerate())
-                playerSkillPriors[teamIndex][playerIndex] = Variable.Random(playerPrior).Named("PlayerSkill");
+            // Array to hold the index of the winning and losing team in each game
+            var winner = Variable.Observed(winnerIndex, nGames).Named("winner");
+            var loser = Variable.Observed(loserIndex, nGames).Named("loser");
 
+            // Array to hold the player lookup table. With this array player's details can be found in the skills array (to be defined later)
+            var matches = Variable.Observed(playerMatches, nGames, nTeamsPerGame, nPlayersPerTeam).Named("matches");
 
-            // player skill may have changed since the last time a player has played
-            var timeDecayedPlayerSkill = Variable.Array(Variable.Array<double>(player), team);
-            for (var t = 0; t < 2; ++t)
+            // This array is used to hold the value of the total number of games played by this player in this current batch.
+            // This number can be used to create the 2D jagged array holding the skills of the player over time.
+            var playerGameCounts = Variable.Observed(gameCountsPerPlayer, allPlayers).Named("playerGameCounts");
+
+            // This range is used to access the 2d jagged array (because players play different amount of games in the batch) holding the player skills
+            var gameCounts = new Range(playerGameCounts[allPlayers]).Named("gameCounts");
+
+            // Skill matrix for all players through all games, the first column is the prior
+            var skills = Variable.Array(Variable.Array<double>(gameCounts), allPlayers).Named("skills");
+
+            // Array to hold the prior of the skill for each of the players
+            var skillPriors = Variable.Observed(priors, allPlayers).Named("skillPriors");
+
+            // Array to hold the time elapsed between games of each player
+            var playerTimeElapsed = Variable.Observed(playerElapsedDays, allPlayers, gameCounts).Named("playerTimeElapsed");
+
+            // Initialize skills variable array, the outer index is the gameIndex, the innerIndex is the player index
+            using (var playerBlock = Variable.ForEach(allPlayers))
             {
-                for (var p = 0; p < 5; ++p)
+                using (var gameBlock = Variable.ForEach(gameCounts))
                 {
-                    timeDecayedPlayerSkill[t][p] = Variable.GaussianFromMeanAndVariance(playerSkillPriors[t][p], Math.Pow(SkillSharpnessDecreaseFactor, 2) * playerElapsedDays[t][p])
-                        .Named("DecayedPlayerSkill");
+                    using (Variable.If(gameBlock.Index == 0))
+                    {
+                        skills[allPlayers][gameCounts] = Variable<double>.Random(skillPriors[allPlayers]).Named($"{playerBlock.Index}. player prior");
+                    }
+
+                    using (Variable.If(gameBlock.Index > 0))
+                    {
+                        skills[allPlayers][gameCounts] =
+                            Variable.GaussianFromMeanAndPrecision(skills[allPlayers][gameBlock.Index - 1], Math.Pow(SkillSharpnessDecreaseFactor, 2) * playerTimeElapsed[allPlayers][gameCounts])
+                                .Named($"{playerBlock.Index}. player skill in {gameBlock.Index}. game");
+                    }
                 }
             }
+            
+            // Initialize arrays holding Kill, Death and Match Length information
+            var matchLengths = Variable.Observed(matchLength, nGames).Named("matchLengths");
+            var killCount = Variable.Observed(killCounts, nGames, nTeamsPerGame, nPlayersPerTeam).Named("killCount");
+            var killCountMissing = Variable.Observed(killMissing, nGames, nTeamsPerGame, nPlayersPerTeam).Named("killCountMissing");
+            var deathCount = Variable.Observed(deathCounts, nGames, nTeamsPerGame, nPlayersPerTeam).Named("deathCount");
+            var deathCountMissing = Variable.Observed(deathMissing, nGames, nTeamsPerGame, nPlayersPerTeam).Named("deathCountMissing");
 
-            // The player performance is a noisy version of their skill
-            var playerPerformance = Variable.Array(Variable.Array<double>(player), team);
-            playerPerformance[team][player] = Variable.GaussianFromMeanAndVariance(timeDecayedPlayerSkill[team][player], Math.Pow(SkillClassWidth, 2)).Named("PlayerPerformance");
-
-            // The winner performed better in this game
-            var teamPerformance = Variable.Array<double>(team);
-            teamPerformance[team] = Variable.Sum(playerPerformance[team]);
-
-            Variable.ConstrainTrue(
-                teamPerformance[winnerIndex].Named("Winning team performance") > teamPerformance[loserIndex].Named("Losing team performance"));
-
-            // take individual statistics into account
-            var playerKills = Variable.Array(Variable.Array<double>(player), team);
-            for (var t = 0; t < 2; ++t)
+            using (Variable.ForEach(nGames))
             {
-                for (var p = 0; p < 5; ++p)
+                var playerPerformance = Variable.Array(Variable.Array<double>(nPlayersPerTeam), nTeamsPerGame).Named("playerPerformance");
+                var teamPerformance = Variable.Array<double>(nTeamsPerGame).Named("teamPerformance");
+
+                using (Variable.ForEach(nTeamsPerGame))
                 {
-                    var opponentTeamIndex = t == 0 ? 1 : 0;
-                    playerKills[t][p] = Variable.Max(0,
-                        Variable.GaussianFromMeanAndVariance(
-                            (KillWeightPlayerTeamPerformance * playerPerformance[t][p] + KillWeightPlayerOpponentPerformance * (teamPerformance[opponentTeamIndex]) / 5.0) * matchLength,
-                            KillCountVariance * matchLength));
+                    using (Variable.ForEach(nPlayersPerTeam))
+                    {
+                        playerPerformance[nTeamsPerGame][nPlayersPerTeam] =
+                            Variable.GaussianFromMeanAndVariance(skills[matches[nGames][nTeamsPerGame][nPlayersPerTeam]][nGames], Math.Pow(SkillClassWidth, 2))
+                                .Named("playerPerformanceInNthGameInIthTeam");
+                    }
+
+                    teamPerformance[nTeamsPerGame] = Variable.Sum(playerPerformance[nTeamsPerGame]);
+                }
+
+                Variable.ConstrainTrue(teamPerformance[winner[nGames]] > teamPerformance[loser[nGames]]);
+
+                using (var team = Variable.ForEach(nTeamsPerGame))
+                {
+                    using (Variable.ForEach(nPlayersPerTeam))
+                    {
+                        var opponentTeamIndex = Variable.New<int>();
+                        using (Variable.Case(team.Index, 0))
+                        {
+                            opponentTeamIndex.ObservedValue = 1;
+                        }
+
+                        using (Variable.Case(team.Index, 1))
+                        {
+                            opponentTeamIndex.ObservedValue = 0;
+                        }
+
+                        using (Variable.IfNot(killCountMissing[nGames][nTeamsPerGame][nPlayersPerTeam]))
+                        {
+                            killCount[nGames][nTeamsPerGame][nPlayersPerTeam] = Variable.Max(zero,
+                                Variable.GaussianFromMeanAndVariance(
+                                    KillWeightPlayerTeamPerformance * playerPerformance[nTeamsPerGame][nPlayersPerTeam] +
+                                    KillWeightPlayerOpponentPerformance * (teamPerformance[opponentTeamIndex] / teamSize) * matchLengths[nGames], KillCountVariance * matchLengths[nGames]));
+                        }
+
+                        using (Variable.IfNot(deathCountMissing[nGames][nTeamsPerGame][nPlayersPerTeam]))
+                        {
+                            deathCount[nGames][nTeamsPerGame][nPlayersPerTeam] = Variable.Max(zero,
+                                Variable.GaussianFromMeanAndVariance(
+                                    DeathWeightPlayerTeamPerformance * playerPerformance[nTeamsPerGame][nPlayersPerTeam] +
+                                    DeathWeightPlayerOpponentPerformance * (teamPerformance[opponentTeamIndex] / teamSize) * matchLengths[nGames], DeathCountVariance * matchLengths[nGames]));
+                        }
+                    }
                 }
             }
-
-            var playerDeaths = Variable.Array(Variable.Array<double>(player), team);
-            for (var t = 0; t < 2; ++t)
-            {
-                for (var p = 0; p < 5; ++p)
-                {
-                    var opponentTeamIndex = t == 0 ? 1 : 0;
-                    playerDeaths[t][p] = Variable.Max(0,
-                        Variable.GaussianFromMeanAndVariance(
-                            (DeathWeightPlayerTeamPerformance * playerPerformance[t][p] + DeathWeightPlayerOpponentPerformance * (teamPerformance[opponentTeamIndex]) / 5.0) * matchLength,
-                            DeathCountVariance * matchLength));
-                }
-            }
-
-            // attach observed data
-            playerKills.ObservedValue = killCounts;
-            playerDeaths.ObservedValue = deathCounts;
-
 
             // Run inference
-            var inferenceEngine = new InferenceEngine {ShowFactorGraph = false, Algorithm = new ExpectationPropagation(), NumberOfIterations = 10};
+            var inferenceEngine = new InferenceEngine
+            {
+                ShowFactorGraph = false, Algorithm = new ExpectationPropagation(), NumberOfIterations = 10, ModelName = "TrueSkill2",
+                Compiler = {IncludeDebugInformation = true, GenerateInMemory = false, WriteSourceFiles = true}
+            };
 
-            var inferredSkills = inferenceEngine.Infer<Gaussian[][]>(playerSkillPriors);
-
-            // Add Skill Dynamics to player skill posteriors
-            for (var teamIndex = 0; teamIndex < 2; ++teamIndex)
-            for (var playerIndex = 0; playerIndex < 5; ++playerIndex)
-                inferredSkills[teamIndex][playerIndex] = Gaussian.FromMeanAndVariance(inferredSkills[teamIndex][playerIndex].GetMean(),
-                    inferredSkills[teamIndex][playerIndex].GetVariance() + Math.Pow(SkillDynamicsFactor, 2));
+            var inferredSkills = inferenceEngine.Infer<Gaussian[][]>(skills);
 
             // return updated priors / inferred skills
             return inferredSkills;
