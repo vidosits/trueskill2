@@ -4,3 +4,4 @@ obj
 Folder.DotSettings.user
 Test.cs
 *.json
+generated_source

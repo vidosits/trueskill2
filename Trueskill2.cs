@@ -4,8 +4,12 @@ using System.IO;
 using System.Linq;
 using Microsoft.ML.Probabilistic.Algorithms;
 using Microsoft.ML.Probabilistic.Distributions;
+using Microsoft.ML.Probabilistic.Factors;
 using Microsoft.ML.Probabilistic.Models;
+using Microsoft.ML.Probabilistic.Models.Attributes;
 using Newtonsoft.Json;
+
+// ReSharper disable PossibleInvalidOperationException
 
 namespace ts.core
 {
@@ -74,44 +78,64 @@ namespace ts.core
         {
             #region Parameters
 
-            var skillPrior = Gaussian.FromMeanAndVariance(1500, 800 * 800); // N ~ (μ, σ)
-            var skillClassWidthPriorValue = Gamma.Uniform(); // β
-            var skillDynamicsFactorPriorValue = Gamma.Uniform(); // γ
-            var skillSharpnessDecreaseFactorPriorValue = Gamma.Uniform(); // τ
+            // parameter prior values
+            var skillPrior = Gaussian.FromMeanAndVariance(1500, 500 * 500); // N ~ (μ, σ)
 
-            var killWeightPlayerTeamPerformancePriorValue = Beta.Uniform();
-            var killWeightPlayerOpponentPerformancePriorValue = Beta.Uniform();
-            var killCountVariancePriorValue = Beta.Uniform();
+            var skillClassWidthPriorValue = Gamma.FromMeanAndVariance(250, 100 * 100); // β
+            var skillDynamicsPriorValue = Gamma.FromMeanAndVariance(400, 200 * 200); // γ
+            var skillSharpnessDecreasePriorValue = Gamma.FromMeanAndVariance(1, 10); // τ
 
-            var deathWeightPlayerTeamPerformancePriorValue = Beta.Uniform();
-            var deathWeightPlayerOpponentPerformancePriorValue = Beta.Uniform();
-            var deathCountVariancePriorValue = Beta.Uniform();
+            var killWeightPlayerPerformancePriorValue = Gaussian.FromMeanAndVariance(1, 100);
+            var killWeightPlayerOpponentPerformancePriorValue = Gaussian.FromMeanAndVariance(-1, 100);
+            var killCountVariancePriorValue = Gamma.FromMeanAndVariance(1, 10);
+
+            var deathWeightPlayerPerformancePriorValue = Gaussian.FromMeanAndVariance(-1, 100);
+            var deathWeightPlayerOpponentPerformancePriorValue = Gaussian.FromMeanAndVariance(1, 100);
+            var deathCountVariancePriorValue = Gamma.FromMeanAndVariance(1, 10);
 
 
+            // parameter prior variables
             var skillClassWidthPrior = Variable.New<Gamma>().Named("skillClassWidthPrior");
-            var skillDynamicsFactorPrior = Variable.New<Gamma>().Named("skillDynamicsFactorPrior");
-            var skillSharpnessDecreaseFactorPrior = Variable.New<Gamma>().Named("skillSharpnessDecreaseFactorPrior");
+            var skillDynamicsPrior = Variable.New<Gamma>().Named("skillDynamicsPrior");
+            var skillSharpnessDecreasePrior = Variable.New<Gamma>().Named("skillSharpnessDecreasePrior");
 
-            var killWeightPlayerTeamPerformancePrior = Variable.New<Beta>().Named("killWeightPlayerTeamPerformancePrior");
-            var killWeightPlayerOpponentPerformancePrior = Variable.New<Beta>().Named("killWeightPlayerOpponentPerformancePrior");
-            var killCountVariancePrior = Variable.New<Beta>().Named("killCountVariancePrior");
+            var killWeightPlayerPerformancePrior = Variable.New<Gaussian>().Named("killWeightPlayerPerformancePrior");
+            var killWeightPlayerOpponentPerformancePrior = Variable.New<Gaussian>().Named("killWeightPlayerOpponentPerformancePrior");
+            var killCountVariancePrior = Variable.New<Gamma>().Named("killCountVariancePrior");
 
-            var deathWeightPlayerTeamPerformancePrior = Variable.New<Beta>().Named("deathWeightPlayerTeamPerformancePrior");
-            var deathWeightPlayerOpponentPerformancePrior = Variable.New<Beta>().Named("deathWeightPlayerOpponentPerformancePrior");
-            var deathCountVariancePrior = Variable.New<Beta>().Named("deathCountVariancePrior");
+            var deathWeightPlayerPerformancePrior = Variable.New<Gaussian>().Named("deathWeightPlayerPerformancePrior");
+            var deathWeightPlayerOpponentPerformancePrior = Variable.New<Gaussian>().Named("deathWeightPlayerOpponentPerformancePrior");
+            var deathCountVariancePrior = Variable.New<Gamma>().Named("deathCountVariancePrior");
 
-
+            // parameter variables
             var skillClassWidth = Variable<double>.Random(skillClassWidthPrior).Named("skillClassWidth");
-            var skillDynamicsFactor = Variable<double>.Random(skillDynamicsFactorPrior).Named("skillDynamicsFactor");
-            var skillSharpnessDecreaseFactor = Variable<double>.Random(skillSharpnessDecreaseFactorPrior).Named("skillSharpnessDecreaseFactor");
+            skillClassWidth.AddAttribute(new PointEstimate());
 
-            var killWeightPlayerTeamPerformance = Variable<double>.Random(killWeightPlayerTeamPerformancePrior).Named("killWeightPlayerTeamPerformance");
+            var skillDynamics = Variable<double>.Random(skillDynamicsPrior).Named("skillDynamics");
+            skillDynamics.AddAttribute(new PointEstimate());
+
+            var skillSharpnessDecrease = Variable<double>.Random(skillSharpnessDecreasePrior).Named("skillSharpnessDecrease");
+            skillSharpnessDecrease.AddAttribute(new PointEstimate());
+
+
+            var killWeightPlayerPerformance = Variable<double>.Random(killWeightPlayerPerformancePrior).Named("killWeightPlayerPerformance");
+            killWeightPlayerPerformance.AddAttribute(new PointEstimate());
+
             var killWeightPlayerOpponentPerformance = Variable<double>.Random(killWeightPlayerOpponentPerformancePrior).Named("killWeightPlayerOpponentPerformance");
-            var killCountVariance = Variable<double>.Random(killCountVariancePrior).Named("killCountVariance");
+            killWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
 
-            var deathWeightPlayerTeamPerformance = Variable<double>.Random(deathWeightPlayerTeamPerformancePrior).Named("deathWeightPlayerTeamPerformance");
+            var killCountVariance = Variable<double>.Random(killCountVariancePrior).Named("killCountVariance");
+            killCountVariance.AddAttribute(new PointEstimate());
+
+
+            var deathWeightPlayerPerformance = Variable<double>.Random(deathWeightPlayerPerformancePrior).Named("deathWeightPlayerPerformance");
+            deathWeightPlayerPerformance.AddAttribute(new PointEstimate());
+
             var deathWeightPlayerOpponentPerformance = Variable<double>.Random(deathWeightPlayerOpponentPerformancePrior).Named("deathWeightPlayerOpponentPerformance");
+            deathWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
+
             var deathCountVariance = Variable<double>.Random(deathCountVariancePrior).Named("deathCountVariance");
+            deathCountVariance.AddAttribute(new PointEstimate());
 
             #endregion
 
@@ -171,11 +195,11 @@ namespace ts.core
             #region Stats
 
             // Initialize arrays holding player stat(s) (e.g.: kills, deaths, etc.) information and whether they are available
-            var killCounts = Variable.Array(Variable.Array(Variable.Array<double>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("killCount");
-            var isKillCountMissing = Variable.Array(Variable.Array(Variable.Array<bool>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("killCountMissing");
+            var killCounts = Variable.Array(Variable.Array(Variable.Array<double>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("killCounts");
+            var isKillCountMissing = Variable.Array(Variable.Array(Variable.Array<bool>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("isKillCountMissing");
 
-            var deathCounts = Variable.Array(Variable.Array(Variable.Array<double>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("deathCount");
-            var isDeathCountMissing = Variable.Array(Variable.Array(Variable.Array<bool>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("deathCountMissing");
+            var deathCounts = Variable.Array(Variable.Array(Variable.Array<double>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("deathCounts");
+            var isDeathCountMissing = Variable.Array(Variable.Array(Variable.Array<bool>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("isDeathCountMissing");
 
             #endregion
 
@@ -204,21 +228,23 @@ namespace ts.core
 
             #endregion
 
-            // Initialize skills variable array, the outer index is the matchIndex, the innerIndex is the player index
+            // Initialize skills variable array
             using (var playerBlock = Variable.ForEach(allPlayers))
             {
                 using (var matchBlock = Variable.ForEach(matchCounts))
                 {
                     using (Variable.If(matchBlock.Index == 0))
                     {
-                        skills[allPlayers][matchCounts] = Variable<double>.Random(skillPriors[allPlayers]).Named($"{playerBlock.Index}. player prior");
+                        skills[allPlayers][matchBlock.Index] = Variable<double>.Random(skillPriors[allPlayers]).Named($"{playerBlock.Index}. player prior");
                     }
 
                     using (Variable.If(matchBlock.Index > 0))
                     {
-                        skills[allPlayers][matchCounts] =
-                            Variable.GaussianFromMeanAndPrecision(skills[allPlayers][matchBlock.Index - 1], skillSharpnessDecreaseFactor * playerTimeLapse[allPlayers][matchCounts] + skillDynamicsFactor)
-                                .Named($"{playerBlock.Index}. player skill in {matchBlock.Index}. match");
+                        skills[allPlayers][matchBlock.Index] =
+                            Variable.GaussianFromMeanAndVariance(
+                                Variable.GaussianFromMeanAndVariance(
+                                    skills[allPlayers][matchBlock.Index - 1], skillSharpnessDecrease * playerTimeLapse[allPlayers][matchCounts]),
+                                skillDynamics);
                     }
                 }
             }
@@ -261,7 +287,7 @@ namespace ts.core
                         {
                             killCounts[allMatches][nTeamsPerMatch][nPlayersPerTeam] = Variable.Max(zero,
                                 Variable.GaussianFromMeanAndVariance(
-                                    killWeightPlayerTeamPerformance * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] +
+                                    killWeightPlayerPerformance * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] +
                                     killWeightPlayerOpponentPerformance * (teamPerformance[opponentTeamIndex] / teamSize) * matchLengths[allMatches], killCountVariance * matchLengths[allMatches]));
                         }
 
@@ -269,7 +295,7 @@ namespace ts.core
                         {
                             deathCounts[allMatches][nTeamsPerMatch][nPlayersPerTeam] = Variable.Max(zero,
                                 Variable.GaussianFromMeanAndVariance(
-                                    deathWeightPlayerTeamPerformance * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] +
+                                    deathWeightPlayerPerformance * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] +
                                     deathWeightPlayerOpponentPerformance * (teamPerformance[opponentTeamIndex] / teamSize) * matchLengths[allMatches], deathCountVariance * matchLengths[allMatches]));
                         }
                     }
@@ -279,28 +305,40 @@ namespace ts.core
             // Run inference
             var inferenceEngine = new InferenceEngine
             {
-                ShowFactorGraph = false, Algorithm = new ExpectationPropagation(), NumberOfIterations = 10, ModelName = "TrueSkill2",
-                Compiler = {IncludeDebugInformation = true, GenerateInMemory = false, WriteSourceFiles = true, ShowWarnings = true, UseParallelForLoops = true},
+                ShowFactorGraph = false, Algorithm = new ExpectationPropagation(), NumberOfIterations = 250, ModelName = "TrueSkill2",
+                Compiler =
+                {
+                    IncludeDebugInformation = true,
+                    GenerateInMemory = false,
+                    WriteSourceFiles = true,
+                    ShowWarnings = false,
+                    GeneratedSourceFolder = "/mnt/win/Andris/Work/WIN/trueskill/ts.core/generated_source/",
+                    UseParallelForLoops = true
+                },
                 OptimiseForVariables = new List<IVariable>
                 {
                     skills,
                     skillClassWidth,
-                    skillDynamicsFactor,
-                    skillSharpnessDecreaseFactor,
+                    skillDynamics,
+                    skillSharpnessDecrease,
 
-                    killWeightPlayerTeamPerformance,
+                    killWeightPlayerPerformance,
                     killWeightPlayerOpponentPerformance,
                     killCountVariance,
 
-                    deathWeightPlayerTeamPerformance,
+                    deathWeightPlayerPerformance,
                     deathWeightPlayerOpponentPerformance,
                     deathCountVariance
                 }
             };
+            inferenceEngine.Compiler.GivePriorityTo(typeof(GaussianFromMeanAndVarianceOp_PointVariance));
+            // inferenceEngine.Compiler.GivePriorityTo(typeof(GaussianProductOp_PointB));
+            // inferenceEngine.Compiler.GivePriorityTo(typeof(GaussianProductOp_SHG09));
 
             var rawMatches = ReadMatchesFromFile("/mnt/win/Andris/Work/WIN/trueskill/ts.core/sorted_dota2_ts2.json");
+            // var rawMatches = ReadMatchesFromFile("/mnt/win/Andris/Work/WIN/trueskill/ts.core/small.json");
 
-            const int batchSize = 32;
+            var batchSize = 32873;
 
             // dictionary keeping track of player skills
             var playerSkill = new Dictionary<long, Gaussian>();
@@ -310,6 +348,8 @@ namespace ts.core
 
             foreach (var batch in rawMatches.Batch(batchSize))
             {
+                // batchSize = batch.Count();
+
                 var steamIdToIndex = new Dictionary<long, int>();
                 var indexToSteamId = new Dictionary<int, long>();
 
@@ -428,14 +468,14 @@ namespace ts.core
                 #region Parameters
 
                 skillClassWidthPrior.ObservedValue = skillClassWidthPriorValue;
-                skillDynamicsFactorPrior.ObservedValue = skillDynamicsFactorPriorValue;
-                skillSharpnessDecreaseFactorPrior.ObservedValue = skillSharpnessDecreaseFactorPriorValue;
+                skillDynamicsPrior.ObservedValue = skillDynamicsPriorValue;
+                skillSharpnessDecreasePrior.ObservedValue = skillSharpnessDecreasePriorValue;
 
-                killWeightPlayerTeamPerformancePrior.ObservedValue = killWeightPlayerTeamPerformancePriorValue;
+                killWeightPlayerPerformancePrior.ObservedValue = killWeightPlayerPerformancePriorValue;
                 killWeightPlayerOpponentPerformancePrior.ObservedValue = killWeightPlayerOpponentPerformancePriorValue;
                 killCountVariancePrior.ObservedValue = killCountVariancePriorValue;
 
-                deathWeightPlayerTeamPerformancePrior.ObservedValue = deathWeightPlayerTeamPerformancePriorValue;
+                deathWeightPlayerPerformancePrior.ObservedValue = deathWeightPlayerPerformancePriorValue;
                 deathWeightPlayerOpponentPerformancePrior.ObservedValue = deathWeightPlayerOpponentPerformancePriorValue;
                 deathCountVariancePrior.ObservedValue = deathCountVariancePriorValue;
 
@@ -445,6 +485,15 @@ namespace ts.core
 
                 batchLength.ObservedValue = batchSize;
                 numOfPlayers.ObservedValue = batchPriors.Count;
+
+                #endregion
+
+                #region Stats
+
+                killCounts.ObservedValue = batchKillCounts;
+                isKillCountMissing.ObservedValue = batchIsKillCountMissing;
+                deathCounts.ObservedValue = batchDeathCounts;
+                isDeathCountMissing.ObservedValue = batchIsDeathCountMissing;
 
                 #endregion
 
@@ -465,15 +514,6 @@ namespace ts.core
 
                 #endregion
 
-                #region Stats
-
-                killCounts.ObservedValue = batchKillCounts;
-                isKillCountMissing.ObservedValue = batchIsKillCountMissing;
-                deathCounts.ObservedValue = batchDeathCounts;
-                isDeathCountMissing.ObservedValue = batchIsDeathCountMissing;
-
-                #endregion
-
                 #region Mapping
 
                 playerMatchMapping.ObservedValue = batchPlayerMatchMapping.ToArray();
@@ -486,18 +526,79 @@ namespace ts.core
                 foreach (var (i, skillOverTime) in inferredSkills.Enumerate()) playerSkill[indexToSteamId[i]] = skillOverTime.Last();
 
                 // update the parameters
-                skillClassWidthPriorValue = inferenceEngine.Infer<Gamma>(skillClassWidthPrior);
-                skillDynamicsFactorPriorValue = inferenceEngine.Infer<Gamma>(skillDynamicsFactorPrior);
-                skillSharpnessDecreaseFactorPriorValue = inferenceEngine.Infer<Gamma>(skillSharpnessDecreaseFactorPrior);
+                skillClassWidthPriorValue = inferenceEngine.Infer<Gamma>(skillClassWidth);
+                skillDynamicsPriorValue = inferenceEngine.Infer<Gamma>(skillDynamics);
+                skillSharpnessDecreasePriorValue = inferenceEngine.Infer<Gamma>(skillSharpnessDecrease);
 
-                killWeightPlayerTeamPerformancePriorValue = inferenceEngine.Infer<Beta>(killWeightPlayerTeamPerformancePrior);
-                killWeightPlayerOpponentPerformancePriorValue = inferenceEngine.Infer<Beta>(killWeightPlayerOpponentPerformancePrior);
-                killCountVariancePriorValue = inferenceEngine.Infer<Beta>(killCountVariancePrior);
+                killWeightPlayerPerformancePriorValue = inferenceEngine.Infer<Gaussian>(killWeightPlayerPerformance);
+                killWeightPlayerOpponentPerformancePriorValue = inferenceEngine.Infer<Gaussian>(killWeightPlayerOpponentPerformance);
+                killCountVariancePriorValue = inferenceEngine.Infer<Gamma>(killCountVariance);
 
-                deathWeightPlayerTeamPerformancePriorValue = inferenceEngine.Infer<Beta>(deathWeightPlayerTeamPerformancePrior);
-                deathWeightPlayerOpponentPerformancePriorValue = inferenceEngine.Infer<Beta>(deathWeightPlayerOpponentPerformancePrior);
-                deathCountVariancePriorValue = inferenceEngine.Infer<Beta>(deathCountVariancePrior);
+                deathWeightPlayerPerformancePriorValue = inferenceEngine.Infer<Gaussian>(deathWeightPlayerPerformance);
+                deathWeightPlayerOpponentPerformancePriorValue = inferenceEngine.Infer<Gaussian>(deathWeightPlayerOpponentPerformance);
+                deathCountVariancePriorValue = inferenceEngine.Infer<Gamma>(deathCountVariance);
             }
+
+            using (var file = File.CreateText($"/mnt/win/Andris/Work/WIN/trueskill/tests/ratings_{inferenceEngine.NumberOfIterations}_iteration.json"))
+            {
+                new JsonSerializer().Serialize(file, playerSkill);
+            }
+
+            Console.WriteLine($"skillClassWidthPriorValue: {skillClassWidthPriorValue}");
+            Console.WriteLine($"skillDynamicsPriorValue: {skillDynamicsPriorValue}");
+            Console.WriteLine($"skillSharpnessDecreasePriorValue: {skillSharpnessDecreasePriorValue}");
+
+            Console.WriteLine($"killWeightPlayerPerformancePriorValue: {killWeightPlayerPerformancePriorValue}");
+            Console.WriteLine($"killWeightPlayerOpponentPerformancePriorValue: {killWeightPlayerOpponentPerformancePriorValue}");
+            Console.WriteLine($"killCountVariancePriorValue: {killCountVariancePriorValue}");
+
+            Console.WriteLine($"deathWeightPlayerPerformancePriorValue: {deathWeightPlayerPerformancePriorValue}");
+            Console.WriteLine($"deathWeightPlayerOpponentPerformancePriorValue: {deathWeightPlayerOpponentPerformancePriorValue}");
+            Console.WriteLine($"deathCountVariancePriorValue: {deathCountVariancePriorValue}");
+        }
+
+        public static void Test()
+        {
+            // model
+            var nItems = Variable.New<int>().Named("nItems");
+            var item = new Range(nItems).Named("item");
+
+            var meanPrior = Variable.New<Gaussian>();
+
+            var variancePrior = Variable.New<Gamma>();
+            var variance = Variable<double>.Random(variancePrior);
+            variance.AddAttribute(new PointEstimate());
+            var time = Variable.Array<double>(item);
+
+            var measurements = Variable.Array<double>(item).Named("measurements");
+
+
+            using (var itemBlock = Variable.ForEach(item))
+            {
+                using (Variable.If(itemBlock.Index == 0))
+                {
+                    measurements[item] = Variable<double>.Random(meanPrior);
+                }
+
+                using (Variable.If(itemBlock.Index > 0))
+                {
+                    measurements[item] = Variable.GaussianFromMeanAndVariance(measurements[itemBlock.Index - 1], variance * time[item]);
+                }
+            }
+
+            // engine
+            var inferenceEngine = new InferenceEngine();
+
+            // observations
+            nItems.ObservedValue = 5;
+
+            meanPrior.ObservedValue = Gaussian.FromMeanAndVariance(0, 1);
+            variancePrior.ObservedValue = Gamma.FromShapeAndRate(1, 10);
+            measurements.ObservedValue = new[] {1, 1.4, 0.6, 0.5, 0.7};
+            time.ObservedValue = new[] {0, 1.4, 2.1, 1.15, 1.4};
+
+            var inferred = inferenceEngine.Infer<Gamma>(variance);
+            Console.WriteLine(inferred);
         }
     }
 }
