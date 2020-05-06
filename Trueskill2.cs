@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using System.IO;
 using System.Linq;
 using Microsoft.ML.Probabilistic.Algorithms;
@@ -13,42 +14,9 @@ using Newtonsoft.Json;
 
 namespace ts.core
 {
-    public class Player
-    {
-        public int? assists;
-        public int? camps_stacked;
-        public int? deaths;
-        public int? dn_t;
-        public int? gold_spent;
-        public int? hero_damage;
-        public int? hero_healing;
-        public int? kills;
-        public int? lh_t;
-        public int? obs_placed;
-        public int? observer_kills;
-        public int? sen_placed;
-        public int? sentry_kills;
-        public long? steam_id;
-        public double? stuns;
-        public double? teamfight_participation;
-        public int? total_gold;
-        public int? total_xp;
-        public int? tower_damage;
-    }
-
-    public class Match
-    {
-        public DateTime date;
-        public List<Player> dire;
-        public int duration;
-        public long match_id;
-        public List<Player> radiant;
-        public bool radiant_win;
-    }
-
     public static class Trueskill2
     {
-        public static IEnumerable<Match> ReadMatchesFromFile(string fileName)
+        private static IEnumerable<Match> ReadMatchesFromFile(string fileName)
         {
             using (var r = new StreamReader(fileName))
             {
@@ -78,64 +46,202 @@ namespace ts.core
         {
             #region Parameters
 
-            // parameter prior values
+            // parameter variables
             var skillPrior = Gaussian.FromMeanAndVariance(1500, 500 * 500); // N ~ (μ, σ)
 
-            var skillClassWidthPriorValue = Gamma.FromMeanAndVariance(250, 100 * 100); // β
-            var skillDynamicsPriorValue = Gamma.FromMeanAndVariance(400, 200 * 200); // γ
-            var skillSharpnessDecreasePriorValue = Gamma.FromMeanAndVariance(1, 10); // τ
-
-            var killWeightPlayerPerformancePriorValue = Gaussian.FromMeanAndVariance(1, 100);
-            var killWeightPlayerOpponentPerformancePriorValue = Gaussian.FromMeanAndVariance(-1, 100);
-            var killCountVariancePriorValue = Gamma.FromMeanAndVariance(1, 10);
-
-            var deathWeightPlayerPerformancePriorValue = Gaussian.FromMeanAndVariance(-1, 100);
-            var deathWeightPlayerOpponentPerformancePriorValue = Gaussian.FromMeanAndVariance(1, 100);
-            var deathCountVariancePriorValue = Gamma.FromMeanAndVariance(1, 10);
-
-
-            // parameter prior variables
-            var skillClassWidthPrior = Variable.New<Gamma>().Named("skillClassWidthPrior");
-            var skillDynamicsPrior = Variable.New<Gamma>().Named("skillDynamicsPrior");
-            var skillSharpnessDecreasePrior = Variable.New<Gamma>().Named("skillSharpnessDecreasePrior");
-
-            var killWeightPlayerPerformancePrior = Variable.New<Gaussian>().Named("killWeightPlayerPerformancePrior");
-            var killWeightPlayerOpponentPerformancePrior = Variable.New<Gaussian>().Named("killWeightPlayerOpponentPerformancePrior");
-            var killCountVariancePrior = Variable.New<Gamma>().Named("killCountVariancePrior");
-
-            var deathWeightPlayerPerformancePrior = Variable.New<Gaussian>().Named("deathWeightPlayerPerformancePrior");
-            var deathWeightPlayerOpponentPerformancePrior = Variable.New<Gaussian>().Named("deathWeightPlayerOpponentPerformancePrior");
-            var deathCountVariancePrior = Variable.New<Gamma>().Named("deathCountVariancePrior");
-
-            // parameter variables
-            var skillClassWidth = Variable<double>.Random(skillClassWidthPrior).Named("skillClassWidth");
+            var skillClassWidth = Variable.GammaFromMeanAndVariance(250, 100 * 100).Named("skillClassWidth"); // β
             skillClassWidth.AddAttribute(new PointEstimate());
 
-            var skillDynamics = Variable<double>.Random(skillDynamicsPrior).Named("skillDynamics");
+            var skillDynamics = Variable.GammaFromMeanAndVariance(400, 200 * 200).Named("skillDynamics"); // γ
             skillDynamics.AddAttribute(new PointEstimate());
 
-            var skillSharpnessDecrease = Variable<double>.Random(skillSharpnessDecreasePrior).Named("skillSharpnessDecrease");
+            var skillSharpnessDecrease = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("skillSharpnessDecrease"); // τ
             skillSharpnessDecrease.AddAttribute(new PointEstimate());
 
 
-            var killWeightPlayerPerformance = Variable<double>.Random(killWeightPlayerPerformancePrior).Named("killWeightPlayerPerformance");
+            #region Stats
+
+            // kills
+            var killWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("killWeightPlayerPerformance");
             killWeightPlayerPerformance.AddAttribute(new PointEstimate());
 
-            var killWeightPlayerOpponentPerformance = Variable<double>.Random(killWeightPlayerOpponentPerformancePrior).Named("killWeightPlayerOpponentPerformance");
+            var killWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("killWeightPlayerOpponentPerformance");
             killWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
 
-            var killCountVariance = Variable<double>.Random(killCountVariancePrior).Named("killCountVariance");
+            var killCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("killCountVariance");
             killCountVariance.AddAttribute(new PointEstimate());
 
-
-            var deathWeightPlayerPerformance = Variable<double>.Random(deathWeightPlayerPerformancePrior).Named("deathWeightPlayerPerformance");
+            // deaths
+            var deathWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("deathWeightPlayerPerformance");
             deathWeightPlayerPerformance.AddAttribute(new PointEstimate());
 
-            var deathWeightPlayerOpponentPerformance = Variable<double>.Random(deathWeightPlayerOpponentPerformancePrior).Named("deathWeightPlayerOpponentPerformance");
+            var deathWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("deathWeightPlayerOpponentPerformance");
             deathWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
 
-            var deathCountVariance = Variable<double>.Random(deathCountVariancePrior).Named("deathCountVariance");
+            var deathCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("deathCountVariance");
             deathCountVariance.AddAttribute(new PointEstimate());
+
+            // assists
+            var assistsWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("assistsWeightPlayerPerformance");
+            assistsWeightPlayerPerformance.AddAttribute(new PointEstimate());
+
+            var assistsWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("assistsWeightPlayerOpponentPerformance");
+            assistsWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
+
+            var assistsCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("assistsCountVariance");
+            assistsCountVariance.AddAttribute(new PointEstimate());
+
+            // campsStacked
+            var campsStackedWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("campsStackedWeightPlayerPerformance");
+            campsStackedWeightPlayerPerformance.AddAttribute(new PointEstimate());
+
+            var campsStackedWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("campsStackedWeightPlayerOpponentPerformance");
+            campsStackedWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
+
+            var campsStackedCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("campsStackedCountVariance");
+            campsStackedCountVariance.AddAttribute(new PointEstimate());
+
+            // denies
+            var deniesWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("deniesWeightPlayerPerformance");
+            deniesWeightPlayerPerformance.AddAttribute(new PointEstimate());
+
+            var deniesWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("deniesWeightPlayerOpponentPerformance");
+            deniesWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
+
+            var deniesCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("deniesCountVariance");
+            deniesCountVariance.AddAttribute(new PointEstimate());
+
+            // goldSpent
+            var goldSpentWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("goldSpentWeightPlayerPerformance");
+            goldSpentWeightPlayerPerformance.AddAttribute(new PointEstimate());
+
+            var goldSpentWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("goldSpentWeightPlayerOpponentPerformance");
+            goldSpentWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
+
+            var goldSpentCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("goldSpentCountVariance");
+            goldSpentCountVariance.AddAttribute(new PointEstimate());
+
+            // heroDamage
+            var heroDamageWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("heroDamageWeightPlayerPerformance");
+            heroDamageWeightPlayerPerformance.AddAttribute(new PointEstimate());
+
+            var heroDamageWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("heroDamageWeightPlayerOpponentPerformance");
+            heroDamageWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
+
+            var heroDamageCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("heroDamageCountVariance");
+            heroDamageCountVariance.AddAttribute(new PointEstimate());
+
+            // heroHealing
+            var heroHealingWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("heroHealingWeightPlayerPerformance");
+            heroHealingWeightPlayerPerformance.AddAttribute(new PointEstimate());
+
+            var heroHealingWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("heroHealingWeightPlayerOpponentPerformance");
+            heroHealingWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
+
+            var heroHealingCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("heroHealingCountVariance");
+            heroHealingCountVariance.AddAttribute(new PointEstimate());
+
+            // lastHits
+            var lastHitsWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("lastHitsWeightPlayerPerformance");
+            lastHitsWeightPlayerPerformance.AddAttribute(new PointEstimate());
+
+            var lastHitsWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("lastHitsWeightPlayerOpponentPerformance");
+            lastHitsWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
+
+            var lastHitsCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("lastHitsCountVariance");
+            lastHitsCountVariance.AddAttribute(new PointEstimate());
+
+            // observersPlaced
+            var observersPlacedWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("observersPlacedWeightPlayerPerformance");
+            observersPlacedWeightPlayerPerformance.AddAttribute(new PointEstimate());
+
+            var observersPlacedWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("observersPlacedWeightPlayerOpponentPerformance");
+            observersPlacedWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
+
+            var observersPlacedCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("observersPlacedCountVariance");
+            observersPlacedCountVariance.AddAttribute(new PointEstimate());
+
+            // observerKills
+            var observerKillsWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("observerKillsWeightPlayerPerformance");
+            observerKillsWeightPlayerPerformance.AddAttribute(new PointEstimate());
+
+            var observerKillsWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("observerKillsWeightPlayerOpponentPerformance");
+            observerKillsWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
+
+            var observerKillsCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("observerKillsCountVariance");
+            observerKillsCountVariance.AddAttribute(new PointEstimate());
+
+            // sentriesPlaced
+            var sentriesPlacedWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("sentriesPlacedWeightPlayerPerformance");
+            sentriesPlacedWeightPlayerPerformance.AddAttribute(new PointEstimate());
+
+            var sentriesPlacedWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("sentriesPlacedWeightPlayerOpponentPerformance");
+            sentriesPlacedWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
+
+            var sentriesPlacedCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("sentriesPlacedCountVariance");
+            sentriesPlacedCountVariance.AddAttribute(new PointEstimate());
+
+            // sentryKills
+            var sentryKillsWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("sentryKillsWeightPlayerPerformance");
+            sentryKillsWeightPlayerPerformance.AddAttribute(new PointEstimate());
+
+            var sentryKillsWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("sentryKillsWeightPlayerOpponentPerformance");
+            sentryKillsWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
+
+            var sentryKillsCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("sentryKillsCountVariance");
+            sentryKillsCountVariance.AddAttribute(new PointEstimate());
+
+            // stuns
+            var stunsWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("stunsWeightPlayerPerformance");
+            stunsWeightPlayerPerformance.AddAttribute(new PointEstimate());
+
+            var stunsWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("stunsWeightPlayerOpponentPerformance");
+            stunsWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
+
+            var stunsCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("stunsCountVariance");
+            stunsCountVariance.AddAttribute(new PointEstimate());
+
+            // teamfightParticipation
+            var teamfightParticipationWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("teamfightParticipationWeightPlayerPerformance");
+            teamfightParticipationWeightPlayerPerformance.AddAttribute(new PointEstimate());
+
+            var teamfightParticipationWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("teamfightParticipationWeightPlayerOpponentPerformance");
+            teamfightParticipationWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
+
+            var teamfightParticipationCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("teamfightParticipationCountVariance");
+            teamfightParticipationCountVariance.AddAttribute(new PointEstimate());
+
+            // totalGold
+            var totalGoldWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("totalGoldWeightPlayerPerformance");
+            totalGoldWeightPlayerPerformance.AddAttribute(new PointEstimate());
+
+            var totalGoldWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("totalGoldWeightPlayerOpponentPerformance");
+            totalGoldWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
+
+            var totalGoldCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("totalGoldCountVariance");
+            totalGoldCountVariance.AddAttribute(new PointEstimate());
+
+            // totalExperience
+            var totalExperienceWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("totalExperienceWeightPlayerPerformance");
+            totalExperienceWeightPlayerPerformance.AddAttribute(new PointEstimate());
+
+            var totalExperienceWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("totalExperienceWeightPlayerOpponentPerformance");
+            totalExperienceWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
+
+            var totalExperienceCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("totalExperienceCountVariance");
+            totalExperienceCountVariance.AddAttribute(new PointEstimate());
+
+            // towerDamage
+            var towerDamageWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("towerDamageWeightPlayerPerformance");
+            towerDamageWeightPlayerPerformance.AddAttribute(new PointEstimate());
+
+            var towerDamageWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("towerDamageWeightPlayerOpponentPerformance");
+            towerDamageWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
+
+            var towerDamageCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("towerDamageCountVariance");
+            towerDamageCountVariance.AddAttribute(new PointEstimate());
+
+            #endregion
 
             #endregion
 
@@ -200,6 +306,54 @@ namespace ts.core
 
             var deathCounts = Variable.Array(Variable.Array(Variable.Array<double>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("deathCounts");
             var isDeathCountMissing = Variable.Array(Variable.Array(Variable.Array<bool>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("isDeathCountMissing");
+
+            var assistsCounts = Variable.Array(Variable.Array(Variable.Array<double>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("assistsCounts");
+            var isAssistsCountMissing = Variable.Array(Variable.Array(Variable.Array<bool>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("isAssistsCountMissing");
+
+            var campsStackedCounts = Variable.Array(Variable.Array(Variable.Array<double>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("campsStackedCounts");
+            var isCampsStackedCountMissing = Variable.Array(Variable.Array(Variable.Array<bool>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("isCampsStackedCountMissing");
+
+            var deniesCounts = Variable.Array(Variable.Array(Variable.Array<double>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("deniesCounts");
+            var isDeniesCountMissing = Variable.Array(Variable.Array(Variable.Array<bool>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("isDeniesCountMissing");
+
+            var goldSpentCounts = Variable.Array(Variable.Array(Variable.Array<double>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("goldSpentCounts");
+            var isGoldSpentCountMissing = Variable.Array(Variable.Array(Variable.Array<bool>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("isGoldSpentCountMissing");
+
+            var heroDamageCounts = Variable.Array(Variable.Array(Variable.Array<double>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("heroDamageCounts");
+            var isHeroDamageCountMissing = Variable.Array(Variable.Array(Variable.Array<bool>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("isHeroDamageCountMissing");
+
+            var heroHealingCounts = Variable.Array(Variable.Array(Variable.Array<double>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("heroHealingCounts");
+            var isHeroHealingCountMissing = Variable.Array(Variable.Array(Variable.Array<bool>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("isHeroHealingCountMissing");
+
+            var lastHitsCounts = Variable.Array(Variable.Array(Variable.Array<double>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("lastHitsCounts");
+            var isLastHitsCountMissing = Variable.Array(Variable.Array(Variable.Array<bool>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("isLastHitsCountMissing");
+
+            var observersPlacedCounts = Variable.Array(Variable.Array(Variable.Array<double>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("observersPlacedCounts");
+            var isObserversPlacedCountMissing = Variable.Array(Variable.Array(Variable.Array<bool>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("isObserversPlacedCountMissing");
+
+            var observerKillsCounts = Variable.Array(Variable.Array(Variable.Array<double>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("observerKillsCounts");
+            var isObserverKillsCountMissing = Variable.Array(Variable.Array(Variable.Array<bool>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("isObserverKillsCountMissing");
+
+            var sentriesPlacedCounts = Variable.Array(Variable.Array(Variable.Array<double>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("sentriesPlacedCounts");
+            var isSentriesPlacedCountMissing = Variable.Array(Variable.Array(Variable.Array<bool>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("isSentriesPlacedCountMissing");
+
+            var sentryKillsCounts = Variable.Array(Variable.Array(Variable.Array<double>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("sentryKillsCounts");
+            var isSentryKillsCountMissing = Variable.Array(Variable.Array(Variable.Array<bool>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("isSentryKillsCountMissing");
+
+            var stunsCounts = Variable.Array(Variable.Array(Variable.Array<double>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("stunsCounts");
+            var isStunsCountMissing = Variable.Array(Variable.Array(Variable.Array<bool>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("isStunsCountMissing");
+
+            var teamfightParticipationCounts = Variable.Array(Variable.Array(Variable.Array<double>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("teamfightParticipationCounts");
+            var isTeamfightParticipationCountMissing = Variable.Array(Variable.Array(Variable.Array<bool>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("isTeamfightParticipationCountMissing");
+
+            var totalGoldCounts = Variable.Array(Variable.Array(Variable.Array<double>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("totalGoldCounts");
+            var isTotalGoldCountMissing = Variable.Array(Variable.Array(Variable.Array<bool>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("isTotalGoldCountMissing");
+
+            var totalExperienceCounts = Variable.Array(Variable.Array(Variable.Array<double>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("totalExperienceCounts");
+            var isTotalExperienceCountMissing = Variable.Array(Variable.Array(Variable.Array<bool>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("isTotalExperienceCountMissing");
+
+            var towerDamageCounts = Variable.Array(Variable.Array(Variable.Array<double>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("towerDamageCounts");
+            var isTowerDamageCountMissing = Variable.Array(Variable.Array(Variable.Array<bool>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("isTowerDamageCountMissing");
 
             #endregion
 
@@ -298,6 +452,135 @@ namespace ts.core
                                     deathWeightPlayerPerformance * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] +
                                     deathWeightPlayerOpponentPerformance * (teamPerformance[opponentTeamIndex] / teamSize) * matchLengths[allMatches], deathCountVariance * matchLengths[allMatches]));
                         }
+
+                        using (Variable.IfNot(isAssistsCountMissing[allMatches][nTeamsPerMatch][nPlayersPerTeam]))
+                        {
+                            assistsCounts[allMatches][nTeamsPerMatch][nPlayersPerTeam] = Variable.Max(zero,
+                                Variable.GaussianFromMeanAndVariance(
+                                    assistsWeightPlayerPerformance * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] +
+                                    assistsWeightPlayerOpponentPerformance * (teamPerformance[opponentTeamIndex] / teamSize) * matchLengths[allMatches], assistsCountVariance * matchLengths[allMatches]));
+                        }
+
+                        using (Variable.IfNot(isCampsStackedCountMissing[allMatches][nTeamsPerMatch][nPlayersPerTeam]))
+                        {
+                            campsStackedCounts[allMatches][nTeamsPerMatch][nPlayersPerTeam] = Variable.Max(zero,
+                                Variable.GaussianFromMeanAndVariance(
+                                    campsStackedWeightPlayerPerformance * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] +
+                                    campsStackedWeightPlayerOpponentPerformance * (teamPerformance[opponentTeamIndex] / teamSize) * matchLengths[allMatches], campsStackedCountVariance * matchLengths[allMatches]));
+                        }
+
+                        using (Variable.IfNot(isDeniesCountMissing[allMatches][nTeamsPerMatch][nPlayersPerTeam]))
+                        {
+                            deniesCounts[allMatches][nTeamsPerMatch][nPlayersPerTeam] = Variable.Max(zero,
+                                Variable.GaussianFromMeanAndVariance(
+                                    deniesWeightPlayerPerformance * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] +
+                                    deniesWeightPlayerOpponentPerformance * (teamPerformance[opponentTeamIndex] / teamSize) * matchLengths[allMatches], deniesCountVariance * matchLengths[allMatches]));
+                        }
+
+                        using (Variable.IfNot(isGoldSpentCountMissing[allMatches][nTeamsPerMatch][nPlayersPerTeam]))
+                        {
+                            goldSpentCounts[allMatches][nTeamsPerMatch][nPlayersPerTeam] = Variable.Max(zero,
+                                Variable.GaussianFromMeanAndVariance(
+                                    goldSpentWeightPlayerPerformance * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] +
+                                    goldSpentWeightPlayerOpponentPerformance * (teamPerformance[opponentTeamIndex] / teamSize) * matchLengths[allMatches], goldSpentCountVariance * matchLengths[allMatches]));
+                        }
+
+                        using (Variable.IfNot(isHeroDamageCountMissing[allMatches][nTeamsPerMatch][nPlayersPerTeam]))
+                        {
+                            heroDamageCounts[allMatches][nTeamsPerMatch][nPlayersPerTeam] = Variable.Max(zero,
+                                Variable.GaussianFromMeanAndVariance(
+                                    heroDamageWeightPlayerPerformance * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] +
+                                    heroDamageWeightPlayerOpponentPerformance * (teamPerformance[opponentTeamIndex] / teamSize) * matchLengths[allMatches], heroDamageCountVariance * matchLengths[allMatches]));
+                        }
+
+                        using (Variable.IfNot(isHeroHealingCountMissing[allMatches][nTeamsPerMatch][nPlayersPerTeam]))
+                        {
+                            heroHealingCounts[allMatches][nTeamsPerMatch][nPlayersPerTeam] = Variable.Max(zero,
+                                Variable.GaussianFromMeanAndVariance(
+                                    heroHealingWeightPlayerPerformance * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] +
+                                    heroHealingWeightPlayerOpponentPerformance * (teamPerformance[opponentTeamIndex] / teamSize) * matchLengths[allMatches], heroHealingCountVariance * matchLengths[allMatches]));
+                        }
+
+                        using (Variable.IfNot(isLastHitsCountMissing[allMatches][nTeamsPerMatch][nPlayersPerTeam]))
+                        {
+                            lastHitsCounts[allMatches][nTeamsPerMatch][nPlayersPerTeam] = Variable.Max(zero,
+                                Variable.GaussianFromMeanAndVariance(
+                                    lastHitsWeightPlayerPerformance * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] +
+                                    lastHitsWeightPlayerOpponentPerformance * (teamPerformance[opponentTeamIndex] / teamSize) * matchLengths[allMatches], lastHitsCountVariance * matchLengths[allMatches]));
+                        }
+
+                        using (Variable.IfNot(isObserversPlacedCountMissing[allMatches][nTeamsPerMatch][nPlayersPerTeam]))
+                        {
+                            observersPlacedCounts[allMatches][nTeamsPerMatch][nPlayersPerTeam] = Variable.Max(zero,
+                                Variable.GaussianFromMeanAndVariance(
+                                    observersPlacedWeightPlayerPerformance * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] +
+                                    observersPlacedWeightPlayerOpponentPerformance * (teamPerformance[opponentTeamIndex] / teamSize) * matchLengths[allMatches], observersPlacedCountVariance * matchLengths[allMatches]));
+                        }
+
+                        using (Variable.IfNot(isObserverKillsCountMissing[allMatches][nTeamsPerMatch][nPlayersPerTeam]))
+                        {
+                            observerKillsCounts[allMatches][nTeamsPerMatch][nPlayersPerTeam] = Variable.Max(zero,
+                                Variable.GaussianFromMeanAndVariance(
+                                    observerKillsWeightPlayerPerformance * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] +
+                                    observerKillsWeightPlayerOpponentPerformance * (teamPerformance[opponentTeamIndex] / teamSize) * matchLengths[allMatches], observerKillsCountVariance * matchLengths[allMatches]));
+                        }
+
+                        using (Variable.IfNot(isSentriesPlacedCountMissing[allMatches][nTeamsPerMatch][nPlayersPerTeam]))
+                        {
+                            sentriesPlacedCounts[allMatches][nTeamsPerMatch][nPlayersPerTeam] = Variable.Max(zero,
+                                Variable.GaussianFromMeanAndVariance(
+                                    sentriesPlacedWeightPlayerPerformance * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] +
+                                    sentriesPlacedWeightPlayerOpponentPerformance * (teamPerformance[opponentTeamIndex] / teamSize) * matchLengths[allMatches], sentriesPlacedCountVariance * matchLengths[allMatches]));
+                        }
+
+                        using (Variable.IfNot(isSentryKillsCountMissing[allMatches][nTeamsPerMatch][nPlayersPerTeam]))
+                        {
+                            sentryKillsCounts[allMatches][nTeamsPerMatch][nPlayersPerTeam] = Variable.Max(zero,
+                                Variable.GaussianFromMeanAndVariance(
+                                    sentryKillsWeightPlayerPerformance * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] +
+                                    sentryKillsWeightPlayerOpponentPerformance * (teamPerformance[opponentTeamIndex] / teamSize) * matchLengths[allMatches], sentryKillsCountVariance * matchLengths[allMatches]));
+                        }
+
+                        using (Variable.IfNot(isStunsCountMissing[allMatches][nTeamsPerMatch][nPlayersPerTeam]))
+                        {
+                            stunsCounts[allMatches][nTeamsPerMatch][nPlayersPerTeam] = Variable.Max(zero,
+                                Variable.GaussianFromMeanAndVariance(
+                                    stunsWeightPlayerPerformance * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] +
+                                    stunsWeightPlayerOpponentPerformance * (teamPerformance[opponentTeamIndex] / teamSize) * matchLengths[allMatches], stunsCountVariance * matchLengths[allMatches]));
+                        }
+
+                        using (Variable.IfNot(isTeamfightParticipationCountMissing[allMatches][nTeamsPerMatch][nPlayersPerTeam]))
+                        {
+                            teamfightParticipationCounts[allMatches][nTeamsPerMatch][nPlayersPerTeam] = Variable.Max(zero,
+                                Variable.GaussianFromMeanAndVariance(
+                                    teamfightParticipationWeightPlayerPerformance * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] +
+                                    teamfightParticipationWeightPlayerOpponentPerformance * (teamPerformance[opponentTeamIndex] / teamSize) * matchLengths[allMatches],
+                                    teamfightParticipationCountVariance * matchLengths[allMatches]));
+                        }
+
+                        using (Variable.IfNot(isTotalGoldCountMissing[allMatches][nTeamsPerMatch][nPlayersPerTeam]))
+                        {
+                            totalGoldCounts[allMatches][nTeamsPerMatch][nPlayersPerTeam] = Variable.Max(zero,
+                                Variable.GaussianFromMeanAndVariance(
+                                    totalGoldWeightPlayerPerformance * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] +
+                                    totalGoldWeightPlayerOpponentPerformance * (teamPerformance[opponentTeamIndex] / teamSize) * matchLengths[allMatches], totalGoldCountVariance * matchLengths[allMatches]));
+                        }
+
+                        using (Variable.IfNot(isTotalExperienceCountMissing[allMatches][nTeamsPerMatch][nPlayersPerTeam]))
+                        {
+                            totalExperienceCounts[allMatches][nTeamsPerMatch][nPlayersPerTeam] = Variable.Max(zero,
+                                Variable.GaussianFromMeanAndVariance(
+                                    totalExperienceWeightPlayerPerformance * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] +
+                                    totalExperienceWeightPlayerOpponentPerformance * (teamPerformance[opponentTeamIndex] / teamSize) * matchLengths[allMatches], totalExperienceCountVariance * matchLengths[allMatches]));
+                        }
+
+                        using (Variable.IfNot(isTowerDamageCountMissing[allMatches][nTeamsPerMatch][nPlayersPerTeam]))
+                        {
+                            towerDamageCounts[allMatches][nTeamsPerMatch][nPlayersPerTeam] = Variable.Max(zero,
+                                Variable.GaussianFromMeanAndVariance(
+                                    towerDamageWeightPlayerPerformance * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] +
+                                    towerDamageWeightPlayerOpponentPerformance * (teamPerformance[opponentTeamIndex] / teamSize) * matchLengths[allMatches], towerDamageCountVariance * matchLengths[allMatches]));
+                        }
                     }
                 }
             }
@@ -305,7 +588,7 @@ namespace ts.core
             // Run inference
             var inferenceEngine = new InferenceEngine
             {
-                ShowFactorGraph = false, Algorithm = new ExpectationPropagation(), NumberOfIterations = 250, ModelName = "TrueSkill2",
+                ShowFactorGraph = false, Algorithm = new ExpectationPropagation(), NumberOfIterations = 100, ModelName = "TrueSkill2",
                 Compiler =
                 {
                     IncludeDebugInformation = true,
@@ -313,7 +596,7 @@ namespace ts.core
                     WriteSourceFiles = true,
                     ShowWarnings = false,
                     GeneratedSourceFolder = "/mnt/win/Andris/Work/WIN/trueskill/ts.core/generated_source/",
-                    UseParallelForLoops = true
+                    UseParallelForLoops = false
                 },
                 OptimiseForVariables = new List<IVariable>
                 {
@@ -373,15 +656,94 @@ namespace ts.core
 
                 // holds the kill counts for the k-th player in the j-th team in the i-th match, index order of this array is [i][j][k] / [match][team][player]
                 var batchKillCounts = new double[batchSize][][];
-
                 // holds the value for whether the kill count for k-th player in the j-th team in the i-th match is missing or not
                 var batchIsKillCountMissing = new bool[batchSize][][];
 
                 // holds the death counts for the k-th player in the j-th team in the i-th match, index order of this array is [i][j][k] / [match][team][player]
                 var batchDeathCounts = new double[batchSize][][];
-
                 // holds the value for whether the death count for k-th player in the j-th team in the i-th match is missing or not
                 var batchIsDeathCountMissing = new bool[batchSize][][];
+
+                // holds the assists counts for the k-th player in the j-th team in the i-th match, index order of this array is [i][j][k] / [match][team][player]
+                var batchAssistsCounts = new double[batchSize][][];
+                // holds the value for whether the assists count for k-th player in the j-th team in the i-th match is missing or not
+                var batchIsAssistsCountMissing = new bool[batchSize][][];
+
+                // holds the campsStacked counts for the k-th player in the j-th team in the i-th match, index order of this array is [i][j][k] / [match][team][player]
+                var batchCampsStackedCounts = new double[batchSize][][];
+                // holds the value for whether the campsStacked count for k-th player in the j-th team in the i-th match is missing or not
+                var batchIsCampsStackedCountMissing = new bool[batchSize][][];
+
+                // holds the denies counts for the k-th player in the j-th team in the i-th match, index order of this array is [i][j][k] / [match][team][player]
+                var batchDeniesCounts = new double[batchSize][][];
+                // holds the value for whether the denies count for k-th player in the j-th team in the i-th match is missing or not
+                var batchIsDeniesCountMissing = new bool[batchSize][][];
+
+                // holds the goldSpent counts for the k-th player in the j-th team in the i-th match, index order of this array is [i][j][k] / [match][team][player]
+                var batchGoldSpentCounts = new double[batchSize][][];
+                // holds the value for whether the goldSpent count for k-th player in the j-th team in the i-th match is missing or not
+                var batchIsGoldSpentCountMissing = new bool[batchSize][][];
+
+                // holds the heroDamage counts for the k-th player in the j-th team in the i-th match, index order of this array is [i][j][k] / [match][team][player]
+                var batchHeroDamageCounts = new double[batchSize][][];
+                // holds the value for whether the heroDamage count for k-th player in the j-th team in the i-th match is missing or not
+                var batchIsHeroDamageCountMissing = new bool[batchSize][][];
+
+                // holds the heroHealing counts for the k-th player in the j-th team in the i-th match, index order of this array is [i][j][k] / [match][team][player]
+                var batchHeroHealingCounts = new double[batchSize][][];
+                // holds the value for whether the heroHealing count for k-th player in the j-th team in the i-th match is missing or not
+                var batchIsHeroHealingCountMissing = new bool[batchSize][][];
+
+                // holds the lastHits counts for the k-th player in the j-th team in the i-th match, index order of this array is [i][j][k] / [match][team][player]
+                var batchLastHitsCounts = new double[batchSize][][];
+                // holds the value for whether the lastHits count for k-th player in the j-th team in the i-th match is missing or not
+                var batchIsLastHitsCountMissing = new bool[batchSize][][];
+
+                // holds the observersPlaced counts for the k-th player in the j-th team in the i-th match, index order of this array is [i][j][k] / [match][team][player]
+                var batchObserversPlacedCounts = new double[batchSize][][];
+                // holds the value for whether the observersPlaced count for k-th player in the j-th team in the i-th match is missing or not
+                var batchIsObserversPlacedCountMissing = new bool[batchSize][][];
+
+                // holds the observerKills counts for the k-th player in the j-th team in the i-th match, index order of this array is [i][j][k] / [match][team][player]
+                var batchObserverKillsCounts = new double[batchSize][][];
+                // holds the value for whether the observerKills count for k-th player in the j-th team in the i-th match is missing or not
+                var batchIsObserverKillsCountMissing = new bool[batchSize][][];
+
+                // holds the sentriesPlaced counts for the k-th player in the j-th team in the i-th match, index order of this array is [i][j][k] / [match][team][player]
+                var batchSentriesPlacedCounts = new double[batchSize][][];
+                // holds the value for whether the sentriesPlaced count for k-th player in the j-th team in the i-th match is missing or not
+                var batchIsSentriesPlacedCountMissing = new bool[batchSize][][];
+
+                // holds the sentryKills counts for the k-th player in the j-th team in the i-th match, index order of this array is [i][j][k] / [match][team][player]
+                var batchSentryKillsCounts = new double[batchSize][][];
+                // holds the value for whether the sentryKills count for k-th player in the j-th team in the i-th match is missing or not
+                var batchIsSentryKillsCountMissing = new bool[batchSize][][];
+
+                // holds the stuns counts for the k-th player in the j-th team in the i-th match, index order of this array is [i][j][k] / [match][team][player]
+                var batchStunsCounts = new double[batchSize][][];
+                // holds the value for whether the stuns count for k-th player in the j-th team in the i-th match is missing or not
+                var batchIsStunsCountMissing = new bool[batchSize][][];
+
+                // holds the teamfightParticipation counts for the k-th player in the j-th team in the i-th match, index order of this array is [i][j][k] / [match][team][player]
+                var batchTeamfightParticipationCounts = new double[batchSize][][];
+                // holds the value for whether the teamfightParticipation count for k-th player in the j-th team in the i-th match is missing or not
+                var batchIsTeamfightParticipationCountMissing = new bool[batchSize][][];
+
+                // holds the totalGold counts for the k-th player in the j-th team in the i-th match, index order of this array is [i][j][k] / [match][team][player]
+                var batchTotalGoldCounts = new double[batchSize][][];
+                // holds the value for whether the totalGold count for k-th player in the j-th team in the i-th match is missing or not
+                var batchIsTotalGoldCountMissing = new bool[batchSize][][];
+
+                // holds the totalExperience counts for the k-th player in the j-th team in the i-th match, index order of this array is [i][j][k] / [match][team][player]
+                var batchTotalExperienceCounts = new double[batchSize][][];
+                // holds the value for whether the totalExperience count for k-th player in the j-th team in the i-th match is missing or not
+                var batchIsTotalExperienceCountMissing = new bool[batchSize][][];
+
+                // holds the towerDamage counts for the k-th player in the j-th team in the i-th match, index order of this array is [i][j][k] / [match][team][player]
+                var batchTowerDamageCounts = new double[batchSize][][];
+                // holds the value for whether the towerDamage count for k-th player in the j-th team in the i-th match is missing or not
+                var batchIsTowerDamageCountMissing = new bool[batchSize][][];
+
 
                 // holds the index of the winning team for each match in the batch
                 var batchWinners = new int[batchSize];
@@ -452,34 +814,83 @@ namespace ts.core
                     batchWinners[matchIndex] = match.radiant_win ? 0 : 1;
 
                     // set killCounts and killCountMissing
-                    batchKillCounts[matchIndex] = teams.Select(t => t.Select(p => p.kills != null ? (double) p.kills.Value : 0.0).ToArray()).ToArray();
-                    batchIsKillCountMissing[matchIndex] = teams.Select(t => t.Select(p => p.kills == null).ToArray()).ToArray();
+                    batchKillCounts[matchIndex] = teams.Select(t => t.Select(p => Validate(p.kills)).ToArray()).ToArray();
+                    batchIsKillCountMissing[matchIndex] = teams.Select(t => t.Select(p => IsValueMissing(p.kills)).ToArray()).ToArray();
 
                     // set deathCounts and deathCountMissing
-                    batchDeathCounts[matchIndex] = teams.Select(t => t.Select(p => p.deaths != null ? (double) p.deaths.Value : 0.0).ToArray()).ToArray();
-                    batchIsDeathCountMissing[matchIndex] = teams.Select(t => t.Select(p => p.deaths == null).ToArray()).ToArray();
+                    batchDeathCounts[matchIndex] = teams.Select(t => t.Select(p => Validate(p.deaths)).ToArray()).ToArray();
+                    batchIsDeathCountMissing[matchIndex] = teams.Select(t => t.Select(p => IsValueMissing(p.deaths)).ToArray()).ToArray();
+
+                    // set assistsCounts and assistsCountMissing
+                    batchAssistsCounts[matchIndex] = teams.Select(t => t.Select(p => Validate(p.assists)).ToArray()).ToArray();
+                    batchIsAssistsCountMissing[matchIndex] = teams.Select(t => t.Select(p => IsValueMissing(p.assists)).ToArray()).ToArray();
+
+                    // set campsStackedCounts and campsStackedCountMissing
+                    batchCampsStackedCounts[matchIndex] = teams.Select(t => t.Select(p => Validate(p.camps_stacked)).ToArray()).ToArray();
+                    batchIsCampsStackedCountMissing[matchIndex] = teams.Select(t => t.Select(p => IsValueMissing(p.camps_stacked)).ToArray()).ToArray();
+
+                    // set deniesCounts and deniesCountMissing
+                    batchDeniesCounts[matchIndex] = teams.Select(t => t.Select(p => Validate(p.dn_t)).ToArray()).ToArray();
+                    batchIsDeniesCountMissing[matchIndex] = teams.Select(t => t.Select(p => IsValueMissing(p.dn_t)).ToArray()).ToArray();
+
+                    // set goldSpentCounts and goldSpentCountMissing
+                    batchGoldSpentCounts[matchIndex] = teams.Select(t => t.Select(p => Validate(p.gold_spent)).ToArray()).ToArray();
+                    batchIsGoldSpentCountMissing[matchIndex] = teams.Select(t => t.Select(p => IsValueMissing(p.gold_spent)).ToArray()).ToArray();
+
+                    // set heroDamageCounts and heroDamageCountMissing
+                    batchHeroDamageCounts[matchIndex] = teams.Select(t => t.Select(p => Validate(p.hero_damage)).ToArray()).ToArray();
+                    batchIsHeroDamageCountMissing[matchIndex] = teams.Select(t => t.Select(p => IsValueMissing(p.hero_damage)).ToArray()).ToArray();
+
+                    // set heroHealingCounts and heroHealingCountMissing
+                    batchHeroHealingCounts[matchIndex] = teams.Select(t => t.Select(p => Validate(p.hero_healing)).ToArray()).ToArray();
+                    batchIsHeroHealingCountMissing[matchIndex] = teams.Select(t => t.Select(p => IsValueMissing(p.hero_healing)).ToArray()).ToArray();
+
+                    // set lastHitsCounts and lastHitsCountMissing
+                    batchLastHitsCounts[matchIndex] = teams.Select(t => t.Select(p => Validate(p.lh_t)).ToArray()).ToArray();
+                    batchIsLastHitsCountMissing[matchIndex] = teams.Select(t => t.Select(p => IsValueMissing(p.lh_t)).ToArray()).ToArray();
+
+                    // set observersPlacedCounts and observersPlacedCountMissing
+                    batchObserversPlacedCounts[matchIndex] = teams.Select(t => t.Select(p => Validate(p.obs_placed)).ToArray()).ToArray();
+                    batchIsObserversPlacedCountMissing[matchIndex] = teams.Select(t => t.Select(p => IsValueMissing(p.obs_placed)).ToArray()).ToArray();
+
+                    // set observerKillsCounts and observerKillsCountMissing
+                    batchObserverKillsCounts[matchIndex] = teams.Select(t => t.Select(p => Validate(p.observer_kills)).ToArray()).ToArray();
+                    batchIsObserverKillsCountMissing[matchIndex] = teams.Select(t => t.Select(p => IsValueMissing(p.observer_kills)).ToArray()).ToArray();
+
+                    // set sentriesPlacedCounts and sentriesPlacedCountMissing
+                    batchSentriesPlacedCounts[matchIndex] = teams.Select(t => t.Select(p => Validate(p.sen_placed)).ToArray()).ToArray();
+                    batchIsSentriesPlacedCountMissing[matchIndex] = teams.Select(t => t.Select(p => IsValueMissing(p.sen_placed)).ToArray()).ToArray();
+
+                    // set sentryKillsCounts and sentryKillsCountMissing
+                    batchSentryKillsCounts[matchIndex] = teams.Select(t => t.Select(p => Validate(p.sentry_kills)).ToArray()).ToArray();
+                    batchIsSentryKillsCountMissing[matchIndex] = teams.Select(t => t.Select(p => IsValueMissing(p.sentry_kills)).ToArray()).ToArray();
+
+                    // set stunsCounts and stunsCountMissing
+                    batchStunsCounts[matchIndex] = teams.Select(t => t.Select(p => Validate(p.stuns)).ToArray()).ToArray();
+                    batchIsStunsCountMissing[matchIndex] = teams.Select(t => t.Select(p => IsValueMissing(p.stuns)).ToArray()).ToArray();
+
+                    // set teamfightParticipationCounts and teamfightParticipationCountMissing
+                    batchTeamfightParticipationCounts[matchIndex] = teams.Select(t => t.Select(p => Validate(p.teamfight_participation, 0, 1)).ToArray()).ToArray();
+                    batchIsTeamfightParticipationCountMissing[matchIndex] = teams.Select(t => t.Select(p => IsValueMissing(p.teamfight_participation, 0, 1)).ToArray()).ToArray();
+
+                    // set totalGoldCounts and totalGoldCountMissing
+                    batchTotalGoldCounts[matchIndex] = teams.Select(t => t.Select(p => Validate(p.total_gold)).ToArray()).ToArray();
+                    batchIsTotalGoldCountMissing[matchIndex] = teams.Select(t => t.Select(p => IsValueMissing(p.total_gold)).ToArray()).ToArray();
+
+                    // set totalExperienceCounts and totalExperienceCountMissing
+                    batchTotalExperienceCounts[matchIndex] = teams.Select(t => t.Select(p => Validate(p.total_xp)).ToArray()).ToArray();
+                    batchIsTotalExperienceCountMissing[matchIndex] = teams.Select(t => t.Select(p => IsValueMissing(p.total_xp)).ToArray()).ToArray();
+
+                    // set towerDamageCounts and towerDamageCountMissing
+                    batchTowerDamageCounts[matchIndex] = teams.Select(t => t.Select(p => Validate(p.tower_damage)).ToArray()).ToArray();
+                    batchIsTowerDamageCountMissing[matchIndex] = teams.Select(t => t.Select(p => IsValueMissing(p.tower_damage)).ToArray()).ToArray();
+
 
                     // set loserIndex
                     batchLosers[matchIndex] = match.radiant_win ? 1 : 0;
                 }
 
                 // process this batch with TS2
-
-                #region Parameters
-
-                skillClassWidthPrior.ObservedValue = skillClassWidthPriorValue;
-                skillDynamicsPrior.ObservedValue = skillDynamicsPriorValue;
-                skillSharpnessDecreasePrior.ObservedValue = skillSharpnessDecreasePriorValue;
-
-                killWeightPlayerPerformancePrior.ObservedValue = killWeightPlayerPerformancePriorValue;
-                killWeightPlayerOpponentPerformancePrior.ObservedValue = killWeightPlayerOpponentPerformancePriorValue;
-                killCountVariancePrior.ObservedValue = killCountVariancePriorValue;
-
-                deathWeightPlayerPerformancePrior.ObservedValue = deathWeightPlayerPerformancePriorValue;
-                deathWeightPlayerOpponentPerformancePrior.ObservedValue = deathWeightPlayerOpponentPerformancePriorValue;
-                deathCountVariancePrior.ObservedValue = deathCountVariancePriorValue;
-
-                #endregion
 
                 #region Constants
 
@@ -494,7 +905,39 @@ namespace ts.core
                 isKillCountMissing.ObservedValue = batchIsKillCountMissing;
                 deathCounts.ObservedValue = batchDeathCounts;
                 isDeathCountMissing.ObservedValue = batchIsDeathCountMissing;
-
+                assistsCounts.ObservedValue = batchAssistsCounts;
+                isAssistsCountMissing.ObservedValue = batchIsAssistsCountMissing;
+                campsStackedCounts.ObservedValue = batchCampsStackedCounts;
+                isCampsStackedCountMissing.ObservedValue = batchIsCampsStackedCountMissing;
+                deniesCounts.ObservedValue = batchDeniesCounts;
+                isDeniesCountMissing.ObservedValue = batchIsDeniesCountMissing;
+                goldSpentCounts.ObservedValue = batchGoldSpentCounts;
+                isGoldSpentCountMissing.ObservedValue = batchIsGoldSpentCountMissing;
+                heroDamageCounts.ObservedValue = batchHeroDamageCounts;
+                isHeroDamageCountMissing.ObservedValue = batchIsHeroDamageCountMissing;
+                heroHealingCounts.ObservedValue = batchHeroHealingCounts;
+                isHeroHealingCountMissing.ObservedValue = batchIsHeroHealingCountMissing;
+                lastHitsCounts.ObservedValue = batchLastHitsCounts;
+                isLastHitsCountMissing.ObservedValue = batchIsLastHitsCountMissing;
+                observersPlacedCounts.ObservedValue = batchObserversPlacedCounts;
+                isObserversPlacedCountMissing.ObservedValue = batchIsObserversPlacedCountMissing;
+                observerKillsCounts.ObservedValue = batchObserverKillsCounts;
+                isObserverKillsCountMissing.ObservedValue = batchIsObserverKillsCountMissing;
+                sentriesPlacedCounts.ObservedValue = batchSentriesPlacedCounts;
+                isSentriesPlacedCountMissing.ObservedValue = batchIsSentriesPlacedCountMissing;
+                sentryKillsCounts.ObservedValue = batchSentryKillsCounts;
+                isSentryKillsCountMissing.ObservedValue = batchIsSentryKillsCountMissing;
+                stunsCounts.ObservedValue = batchStunsCounts;
+                isStunsCountMissing.ObservedValue = batchIsStunsCountMissing;
+                teamfightParticipationCounts.ObservedValue = batchTeamfightParticipationCounts;
+                isTeamfightParticipationCountMissing.ObservedValue = batchIsTeamfightParticipationCountMissing;
+                totalGoldCounts.ObservedValue = batchTotalGoldCounts;
+                isTotalGoldCountMissing.ObservedValue = batchIsTotalGoldCountMissing;
+                totalExperienceCounts.ObservedValue = batchTotalExperienceCounts;
+                isTotalExperienceCountMissing.ObservedValue = batchIsTotalExperienceCountMissing;
+                towerDamageCounts.ObservedValue = batchTowerDamageCounts;
+                isTowerDamageCountMissing.ObservedValue = batchIsTowerDamageCountMissing;
+                        
                 #endregion
 
                 #region Matches & Outcomes
@@ -526,79 +969,34 @@ namespace ts.core
                 foreach (var (i, skillOverTime) in inferredSkills.Enumerate()) playerSkill[indexToSteamId[i]] = skillOverTime.Last();
 
                 // update the parameters
-                skillClassWidthPriorValue = inferenceEngine.Infer<Gamma>(skillClassWidth);
-                skillDynamicsPriorValue = inferenceEngine.Infer<Gamma>(skillDynamics);
-                skillSharpnessDecreasePriorValue = inferenceEngine.Infer<Gamma>(skillSharpnessDecrease);
+                Console.WriteLine($"killClassWidth: {inferenceEngine.Infer<Gamma>(skillClassWidth)}");
+                Console.WriteLine($"killDynamics: {inferenceEngine.Infer<Gamma>(skillDynamics)}");
+                Console.WriteLine($"killSharpnessDecrease: {inferenceEngine.Infer<Gamma>(skillSharpnessDecrease)}");
 
-                killWeightPlayerPerformancePriorValue = inferenceEngine.Infer<Gaussian>(killWeightPlayerPerformance);
-                killWeightPlayerOpponentPerformancePriorValue = inferenceEngine.Infer<Gaussian>(killWeightPlayerOpponentPerformance);
-                killCountVariancePriorValue = inferenceEngine.Infer<Gamma>(killCountVariance);
+                Console.WriteLine($"killWeightPlayerPerformance: {inferenceEngine.Infer<Gaussian>(killWeightPlayerPerformance)}");
+                Console.WriteLine($"killWeightPlayerOpponentPerformance: {inferenceEngine.Infer<Gaussian>(killWeightPlayerOpponentPerformance)}");
+                Console.WriteLine($"killCountVariance: {inferenceEngine.Infer<Gamma>(killCountVariance)}");
 
-                deathWeightPlayerPerformancePriorValue = inferenceEngine.Infer<Gaussian>(deathWeightPlayerPerformance);
-                deathWeightPlayerOpponentPerformancePriorValue = inferenceEngine.Infer<Gaussian>(deathWeightPlayerOpponentPerformance);
-                deathCountVariancePriorValue = inferenceEngine.Infer<Gamma>(deathCountVariance);
+                Console.WriteLine($"deathWeightPlayerPerformance: {inferenceEngine.Infer<Gaussian>(deathWeightPlayerPerformance)}");
+                Console.WriteLine($"deathWeightPlayerOpponentPerformance: {inferenceEngine.Infer<Gaussian>(deathWeightPlayerOpponentPerformance)}");
+                Console.WriteLine($"deathCountVariance: {inferenceEngine.Infer<Gamma>(deathCountVariance)}");
             }
 
             using (var file = File.CreateText($"/mnt/win/Andris/Work/WIN/trueskill/tests/ratings_{inferenceEngine.NumberOfIterations}_iteration.json"))
             {
                 new JsonSerializer().Serialize(file, playerSkill);
             }
-
-            Console.WriteLine($"skillClassWidthPriorValue: {skillClassWidthPriorValue}");
-            Console.WriteLine($"skillDynamicsPriorValue: {skillDynamicsPriorValue}");
-            Console.WriteLine($"skillSharpnessDecreasePriorValue: {skillSharpnessDecreasePriorValue}");
-
-            Console.WriteLine($"killWeightPlayerPerformancePriorValue: {killWeightPlayerPerformancePriorValue}");
-            Console.WriteLine($"killWeightPlayerOpponentPerformancePriorValue: {killWeightPlayerOpponentPerformancePriorValue}");
-            Console.WriteLine($"killCountVariancePriorValue: {killCountVariancePriorValue}");
-
-            Console.WriteLine($"deathWeightPlayerPerformancePriorValue: {deathWeightPlayerPerformancePriorValue}");
-            Console.WriteLine($"deathWeightPlayerOpponentPerformancePriorValue: {deathWeightPlayerOpponentPerformancePriorValue}");
-            Console.WriteLine($"deathCountVariancePriorValue: {deathCountVariancePriorValue}");
         }
 
-        public static void Test()
+        private static double Validate(double? value, double min = 0, double max = double.PositiveInfinity)
         {
-            // model
-            var nItems = Variable.New<int>().Named("nItems");
-            var item = new Range(nItems).Named("item");
+            return !IsValueMissing(value, min, max) ? value.Value : min;
+        }
 
-            var meanPrior = Variable.New<Gaussian>();
+        private static bool IsValueMissing(double? value, double min = 0, double max = double.PositiveInfinity)
+        {
+            return (value == null || value < min || value > max);
 
-            var variancePrior = Variable.New<Gamma>();
-            var variance = Variable<double>.Random(variancePrior);
-            variance.AddAttribute(new PointEstimate());
-            var time = Variable.Array<double>(item);
-
-            var measurements = Variable.Array<double>(item).Named("measurements");
-
-
-            using (var itemBlock = Variable.ForEach(item))
-            {
-                using (Variable.If(itemBlock.Index == 0))
-                {
-                    measurements[item] = Variable<double>.Random(meanPrior);
-                }
-
-                using (Variable.If(itemBlock.Index > 0))
-                {
-                    measurements[item] = Variable.GaussianFromMeanAndVariance(measurements[itemBlock.Index - 1], variance * time[item]);
-                }
-            }
-
-            // engine
-            var inferenceEngine = new InferenceEngine();
-
-            // observations
-            nItems.ObservedValue = 5;
-
-            meanPrior.ObservedValue = Gaussian.FromMeanAndVariance(0, 1);
-            variancePrior.ObservedValue = Gamma.FromShapeAndRate(1, 10);
-            measurements.ObservedValue = new[] {1, 1.4, 0.6, 0.5, 0.7};
-            time.ObservedValue = new[] {0, 1.4, 2.1, 1.15, 1.4};
-
-            var inferred = inferenceEngine.Infer<Gamma>(variance);
-            Console.WriteLine(inferred);
         }
     }
 }
