@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
 using System.IO;
 using System.Linq;
 using Microsoft.ML.Probabilistic.Algorithms;
@@ -38,10 +37,14 @@ namespace ts.core
 
                 Console.WriteLine("OK.");
 
-                return matches;
+                return matches.OrderBy(x => x.match_id);
             }
         }
 
+        /// <summary>
+        /// This method runs a TrueSkill2 model based on the paper "TrueSkill 2:  An improved Bayesian skill rating system" [Minka et al, 2018].
+        /// 
+        /// </summary>
         public static void Run()
         {
             #region Parameters
@@ -49,196 +52,253 @@ namespace ts.core
             // parameter variables
             var skillPrior = Gaussian.FromMeanAndVariance(1500, 500 * 500); // N ~ (μ, σ)
 
-            var skillClassWidth = Variable.GammaFromMeanAndVariance(250, 100 * 100).Named("skillClassWidth"); // β
+            var skillClassWidthPrior = Variable.Observed(Gamma.FromMeanAndVariance(250, 100 * 100));
+            var skillClassWidth = Variable<double>.Random(skillClassWidthPrior).Named("skillClassWidth"); // β  
             skillClassWidth.AddAttribute(new PointEstimate());
 
-            var skillDynamics = Variable.GammaFromMeanAndVariance(400, 200 * 200).Named("skillDynamics"); // γ
+            var skillDynamicsPrior = Variable.Observed(Gamma.FromMeanAndVariance(10, 10 * 10));
+            var skillDynamics = Variable<double>.Random(skillDynamicsPrior).Named("skillDynamics"); // γ
             skillDynamics.AddAttribute(new PointEstimate());
 
-            var skillSharpnessDecrease = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("skillSharpnessDecrease"); // τ
+            var skillSharpnessDecreasePrior = Variable.Observed(Gamma.FromMeanAndVariance(1, 10 * 10));
+            var skillSharpnessDecrease = Variable<double>.Random(skillSharpnessDecreasePrior).Named("skillSharpnessDecrease"); // τ
             skillSharpnessDecrease.AddAttribute(new PointEstimate());
 
 
             #region Stats
 
             // kills
-            var killWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("killWeightPlayerPerformance");
+            var killWeightPlayerPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(1, 10 * 10));
+            var killWeightPlayerPerformance = Variable<double>.Random(killWeightPlayerPerformancePrior).Named("killWeightPlayerPerformance");
             killWeightPlayerPerformance.AddAttribute(new PointEstimate());
 
-            var killWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("killWeightPlayerOpponentPerformance");
+            var killWeightPlayerOpponentPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 10 * 10));
+            var killWeightPlayerOpponentPerformance = Variable<double>.Random(killWeightPlayerOpponentPerformancePrior).Named("killWeightPlayerOpponentPerformance");
             killWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
 
-            var killCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("killCountVariance");
+            var killCountVariancePrior = Variable.Observed(Gamma.FromMeanAndVariance(1, 10 * 10));
+            var killCountVariance = Variable<double>.Random(killCountVariancePrior).Named("killCountVariance");
             killCountVariance.AddAttribute(new PointEstimate());
 
             // deaths
-            var deathWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("deathWeightPlayerPerformance");
+            var deathWeightPlayerPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 10 * 10));
+            var deathWeightPlayerPerformance = Variable<double>.Random(deathWeightPlayerPerformancePrior).Named("deathWeightPlayerPerformance");
             deathWeightPlayerPerformance.AddAttribute(new PointEstimate());
 
-            var deathWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("deathWeightPlayerOpponentPerformance");
+            var deathWeightPlayerOpponentPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(1, 10 * 10));
+            var deathWeightPlayerOpponentPerformance = Variable<double>.Random(deathWeightPlayerOpponentPerformancePrior).Named("deathWeightPlayerOpponentPerformance");
             deathWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
 
-            var deathCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("deathCountVariance");
+            var deathCountVariancePrior = Variable.Observed(Gamma.FromMeanAndVariance(1, 10 * 10));
+            var deathCountVariance = Variable<double>.Random(deathCountVariancePrior).Named("deathCountVariance");
             deathCountVariance.AddAttribute(new PointEstimate());
 
             // assists
-            var assistsWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("assistsWeightPlayerPerformance");
+            var assistsWeightPlayerPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(1, 10 * 10));
+            var assistsWeightPlayerPerformance = Variable<double>.Random(assistsWeightPlayerPerformancePrior).Named("assistsWeightPlayerPerformance");
             assistsWeightPlayerPerformance.AddAttribute(new PointEstimate());
 
-            var assistsWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("assistsWeightPlayerOpponentPerformance");
+            var assistsWeightPlayerOpponentPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 10 * 10));
+            var assistsWeightPlayerOpponentPerformance = Variable<double>.Random(assistsWeightPlayerOpponentPerformancePrior).Named("assistsWeightPlayerOpponentPerformance");
             assistsWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
 
-            var assistsCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("assistsCountVariance");
+            var assistsCountVariancePrior = Variable.Observed(Gamma.FromMeanAndVariance(1, 10 * 10));
+            var assistsCountVariance = Variable<double>.Random(assistsCountVariancePrior).Named("assistsCountVariance");
             assistsCountVariance.AddAttribute(new PointEstimate());
 
             // campsStacked
-            var campsStackedWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("campsStackedWeightPlayerPerformance");
+            var campsStackedWeightPlayerPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(1, 10 * 10));
+            var campsStackedWeightPlayerPerformance = Variable<double>.Random(campsStackedWeightPlayerPerformancePrior).Named("campsStackedWeightPlayerPerformance");
             campsStackedWeightPlayerPerformance.AddAttribute(new PointEstimate());
 
-            var campsStackedWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("campsStackedWeightPlayerOpponentPerformance");
+            var campsStackedWeightPlayerOpponentPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 10 * 10));
+            var campsStackedWeightPlayerOpponentPerformance = Variable<double>.Random(campsStackedWeightPlayerOpponentPerformancePrior).Named("campsStackedWeightPlayerOpponentPerformance");
             campsStackedWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
 
-            var campsStackedCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("campsStackedCountVariance");
+            var campsStackedCountVariancePrior = Variable.Observed(Gamma.FromMeanAndVariance(1, 10 * 10));
+            var campsStackedCountVariance = Variable<double>.Random(campsStackedCountVariancePrior).Named("campsStackedCountVariance");
             campsStackedCountVariance.AddAttribute(new PointEstimate());
 
             // denies
-            var deniesWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("deniesWeightPlayerPerformance");
+            var deniesWeightPlayerPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(1, 10 * 10));
+            var deniesWeightPlayerPerformance = Variable<double>.Random(deniesWeightPlayerPerformancePrior).Named("deniesWeightPlayerPerformance");
             deniesWeightPlayerPerformance.AddAttribute(new PointEstimate());
 
-            var deniesWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("deniesWeightPlayerOpponentPerformance");
+            var deniesWeightPlayerOpponentPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 10 * 10));
+            var deniesWeightPlayerOpponentPerformance = Variable<double>.Random(deniesWeightPlayerOpponentPerformancePrior).Named("deniesWeightPlayerOpponentPerformance");
             deniesWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
 
-            var deniesCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("deniesCountVariance");
+            var deniesCountVariancePrior = Variable.Observed(Gamma.FromMeanAndVariance(1, 10 * 10));
+            var deniesCountVariance = Variable<double>.Random(deniesCountVariancePrior).Named("deniesCountVariance");
             deniesCountVariance.AddAttribute(new PointEstimate());
 
             // goldSpent
-            var goldSpentWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("goldSpentWeightPlayerPerformance");
+            var goldSpentWeightPlayerPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(1, 10 * 10));
+            var goldSpentWeightPlayerPerformance = Variable<double>.Random(goldSpentWeightPlayerPerformancePrior).Named("goldSpentWeightPlayerPerformance");
             goldSpentWeightPlayerPerformance.AddAttribute(new PointEstimate());
 
-            var goldSpentWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("goldSpentWeightPlayerOpponentPerformance");
+            var goldSpentWeightPlayerOpponentPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 10 * 10));
+            var goldSpentWeightPlayerOpponentPerformance = Variable<double>.Random(goldSpentWeightPlayerOpponentPerformancePrior).Named("goldSpentWeightPlayerOpponentPerformance");
             goldSpentWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
 
-            var goldSpentCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("goldSpentCountVariance");
+            var goldSpentCountVariancePrior = Variable.Observed(Gamma.FromMeanAndVariance(1, 10 * 10));
+            var goldSpentCountVariance = Variable<double>.Random(goldSpentCountVariancePrior).Named("goldSpentCountVariance");
             goldSpentCountVariance.AddAttribute(new PointEstimate());
 
             // heroDamage
-            var heroDamageWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("heroDamageWeightPlayerPerformance");
+            var heroDamageWeightPlayerPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(1, 10 * 10));
+            var heroDamageWeightPlayerPerformance = Variable<double>.Random(heroDamageWeightPlayerPerformancePrior).Named("heroDamageWeightPlayerPerformance");
             heroDamageWeightPlayerPerformance.AddAttribute(new PointEstimate());
 
-            var heroDamageWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("heroDamageWeightPlayerOpponentPerformance");
+            var heroDamageWeightPlayerOpponentPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 10 * 10));
+            var heroDamageWeightPlayerOpponentPerformance = Variable<double>.Random(heroDamageWeightPlayerOpponentPerformancePrior).Named("heroDamageWeightPlayerOpponentPerformance");
             heroDamageWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
 
-            var heroDamageCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("heroDamageCountVariance");
+            var heroDamageCountVariancePrior = Variable.Observed(Gamma.FromMeanAndVariance(1, 10 * 10));
+            var heroDamageCountVariance = Variable<double>.Random(heroDamageCountVariancePrior).Named("heroDamageCountVariance");
             heroDamageCountVariance.AddAttribute(new PointEstimate());
 
             // heroHealing
-            var heroHealingWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("heroHealingWeightPlayerPerformance");
+            var heroHealingWeightPlayerPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(1, 10 * 10));
+            var heroHealingWeightPlayerPerformance = Variable<double>.Random(heroHealingWeightPlayerPerformancePrior).Named("heroHealingWeightPlayerPerformance");
             heroHealingWeightPlayerPerformance.AddAttribute(new PointEstimate());
 
-            var heroHealingWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("heroHealingWeightPlayerOpponentPerformance");
+            var heroHealingWeightPlayerOpponentPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 10 * 10));
+            var heroHealingWeightPlayerOpponentPerformance = Variable<double>.Random(heroHealingWeightPlayerOpponentPerformancePrior).Named("heroHealingWeightPlayerOpponentPerformance");
             heroHealingWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
 
-            var heroHealingCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("heroHealingCountVariance");
+            var heroHealingCountVariancePrior = Variable.Observed(Gamma.FromMeanAndVariance(1, 10 * 10));
+            var heroHealingCountVariance = Variable<double>.Random(heroHealingCountVariancePrior).Named("heroHealingCountVariance");
             heroHealingCountVariance.AddAttribute(new PointEstimate());
 
             // lastHits
-            var lastHitsWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("lastHitsWeightPlayerPerformance");
+            var lastHitsWeightPlayerPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(1, 10 * 10));
+            var lastHitsWeightPlayerPerformance = Variable<double>.Random(lastHitsWeightPlayerPerformancePrior).Named("lastHitsWeightPlayerPerformance");
             lastHitsWeightPlayerPerformance.AddAttribute(new PointEstimate());
 
-            var lastHitsWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("lastHitsWeightPlayerOpponentPerformance");
+            var lastHitsWeightPlayerOpponentPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 10 * 10));
+            var lastHitsWeightPlayerOpponentPerformance = Variable<double>.Random(lastHitsWeightPlayerOpponentPerformancePrior).Named("lastHitsWeightPlayerOpponentPerformance");
             lastHitsWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
 
-            var lastHitsCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("lastHitsCountVariance");
+            var lastHitsCountVariancePrior = Variable.Observed(Gamma.FromMeanAndVariance(1, 10 * 10));
+            var lastHitsCountVariance = Variable<double>.Random(lastHitsCountVariancePrior).Named("lastHitsCountVariance");
             lastHitsCountVariance.AddAttribute(new PointEstimate());
 
             // observersPlaced
-            var observersPlacedWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("observersPlacedWeightPlayerPerformance");
+            var observersPlacedWeightPlayerPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(1, 10 * 10));
+            var observersPlacedWeightPlayerPerformance = Variable<double>.Random(observersPlacedWeightPlayerPerformancePrior).Named("observersPlacedWeightPlayerPerformance");
             observersPlacedWeightPlayerPerformance.AddAttribute(new PointEstimate());
 
-            var observersPlacedWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("observersPlacedWeightPlayerOpponentPerformance");
+            var observersPlacedWeightPlayerOpponentPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 10 * 10));
+            var observersPlacedWeightPlayerOpponentPerformance = Variable<double>.Random(observersPlacedWeightPlayerOpponentPerformancePrior).Named("observersPlacedWeightPlayerOpponentPerformance");
             observersPlacedWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
 
-            var observersPlacedCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("observersPlacedCountVariance");
+            var observersPlacedCountVariancePrior = Variable.Observed(Gamma.FromMeanAndVariance(1, 10 * 10));
+            var observersPlacedCountVariance = Variable<double>.Random(observersPlacedCountVariancePrior).Named("observersPlacedCountVariance");
             observersPlacedCountVariance.AddAttribute(new PointEstimate());
 
             // observerKills
-            var observerKillsWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("observerKillsWeightPlayerPerformance");
+            var observerKillsWeightPlayerPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(1, 10 * 10));
+            var observerKillsWeightPlayerPerformance = Variable<double>.Random(observerKillsWeightPlayerPerformancePrior).Named("observerKillsWeightPlayerPerformance");
             observerKillsWeightPlayerPerformance.AddAttribute(new PointEstimate());
 
-            var observerKillsWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("observerKillsWeightPlayerOpponentPerformance");
+            var observerKillsWeightPlayerOpponentPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 10 * 10));
+            var observerKillsWeightPlayerOpponentPerformance = Variable<double>.Random(observerKillsWeightPlayerOpponentPerformancePrior).Named("observerKillsWeightPlayerOpponentPerformance");
             observerKillsWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
 
-            var observerKillsCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("observerKillsCountVariance");
+            var observerKillsCountVariancePrior = Variable.Observed(Gamma.FromMeanAndVariance(1, 10 * 10));
+            var observerKillsCountVariance = Variable<double>.Random(observerKillsCountVariancePrior).Named("observerKillsCountVariance");
             observerKillsCountVariance.AddAttribute(new PointEstimate());
 
             // sentriesPlaced
-            var sentriesPlacedWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("sentriesPlacedWeightPlayerPerformance");
+            var sentriesPlacedWeightPlayerPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(1, 10 * 10));
+            var sentriesPlacedWeightPlayerPerformance = Variable<double>.Random(sentriesPlacedWeightPlayerPerformancePrior).Named("sentriesPlacedWeightPlayerPerformance");
             sentriesPlacedWeightPlayerPerformance.AddAttribute(new PointEstimate());
 
-            var sentriesPlacedWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("sentriesPlacedWeightPlayerOpponentPerformance");
+            var sentriesPlacedWeightPlayerOpponentPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 10 * 10));
+            var sentriesPlacedWeightPlayerOpponentPerformance = Variable<double>.Random(sentriesPlacedWeightPlayerOpponentPerformancePrior).Named("sentriesPlacedWeightPlayerOpponentPerformance");
             sentriesPlacedWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
 
-            var sentriesPlacedCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("sentriesPlacedCountVariance");
+            var sentriesPlacedCountVariancePrior = Variable.Observed(Gamma.FromMeanAndVariance(10, 10 * 10));
+            var sentriesPlacedCountVariance = Variable<double>.Random(sentriesPlacedCountVariancePrior).Named("sentriesPlacedCountVariance");
             sentriesPlacedCountVariance.AddAttribute(new PointEstimate());
 
             // sentryKills
-            var sentryKillsWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("sentryKillsWeightPlayerPerformance");
+            var sentryKillsWeightPlayerPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(1, 10 * 10));
+            var sentryKillsWeightPlayerPerformance = Variable<double>.Random(sentryKillsWeightPlayerPerformancePrior).Named("sentryKillsWeightPlayerPerformance");
             sentryKillsWeightPlayerPerformance.AddAttribute(new PointEstimate());
 
-            var sentryKillsWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("sentryKillsWeightPlayerOpponentPerformance");
+            var sentryKillsWeightPlayerOpponentPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 10 * 10));
+            var sentryKillsWeightPlayerOpponentPerformance = Variable<double>.Random(sentryKillsWeightPlayerOpponentPerformancePrior).Named("sentryKillsWeightPlayerOpponentPerformance");
             sentryKillsWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
 
-            var sentryKillsCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("sentryKillsCountVariance");
+            var sentryKillsCountVariancePrior = Variable.Observed(Gamma.FromMeanAndVariance(1, 10 * 10));
+            var sentryKillsCountVariance = Variable<double>.Random(sentryKillsCountVariancePrior).Named("sentryKillsCountVariance");
             sentryKillsCountVariance.AddAttribute(new PointEstimate());
 
             // stuns
-            var stunsWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("stunsWeightPlayerPerformance");
+            var stunsWeightPlayerPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(1, 10 * 10));
+            var stunsWeightPlayerPerformance = Variable<double>.Random(stunsWeightPlayerPerformancePrior).Named("stunsWeightPlayerPerformance");
             stunsWeightPlayerPerformance.AddAttribute(new PointEstimate());
 
-            var stunsWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("stunsWeightPlayerOpponentPerformance");
+            var stunsWeightPlayerOpponentPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 10 * 10));
+            var stunsWeightPlayerOpponentPerformance = Variable<double>.Random(stunsWeightPlayerOpponentPerformancePrior).Named("stunsWeightPlayerOpponentPerformance");
             stunsWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
 
-            var stunsCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("stunsCountVariance");
+            var stunsCountVariancePrior = Variable.Observed(Gamma.FromMeanAndVariance(1, 10 * 10));
+            var stunsCountVariance = Variable<double>.Random(stunsCountVariancePrior).Named("stunsCountVariance");
             stunsCountVariance.AddAttribute(new PointEstimate());
 
             // teamfightParticipation
-            var teamfightParticipationWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("teamfightParticipationWeightPlayerPerformance");
+            var teamfightParticipationWeightPlayerPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(1, 10 * 10));
+            var teamfightParticipationWeightPlayerPerformance = Variable<double>.Random(teamfightParticipationWeightPlayerPerformancePrior).Named("teamfightParticipationWeightPlayerPerformance");
             teamfightParticipationWeightPlayerPerformance.AddAttribute(new PointEstimate());
 
-            var teamfightParticipationWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("teamfightParticipationWeightPlayerOpponentPerformance");
+            var teamfightParticipationWeightPlayerOpponentPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 10 * 10));
+            var teamfightParticipationWeightPlayerOpponentPerformance = Variable<double>.Random(teamfightParticipationWeightPlayerOpponentPerformancePrior).Named("teamfightParticipationWeightPlayerOpponentPerformance");
             teamfightParticipationWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
 
-            var teamfightParticipationCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("teamfightParticipationCountVariance");
+            var teamfightParticipationCountVariancePrior = Variable.Observed(Gamma.FromMeanAndVariance(1, 10 * 10));
+            var teamfightParticipationCountVariance = Variable<double>.Random(teamfightParticipationCountVariancePrior).Named("teamfightParticipationCountVariance");
             teamfightParticipationCountVariance.AddAttribute(new PointEstimate());
 
             // totalGold
-            var totalGoldWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("totalGoldWeightPlayerPerformance");
+            var totalGoldWeightPlayerPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(1, 10 * 10));
+            var totalGoldWeightPlayerPerformance = Variable<double>.Random(totalGoldWeightPlayerPerformancePrior).Named("totalGoldWeightPlayerPerformance");
             totalGoldWeightPlayerPerformance.AddAttribute(new PointEstimate());
 
-            var totalGoldWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("totalGoldWeightPlayerOpponentPerformance");
+            var totalGoldWeightPlayerOpponentPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 10 * 10));
+            var totalGoldWeightPlayerOpponentPerformance = Variable<double>.Random(totalGoldWeightPlayerOpponentPerformancePrior).Named("totalGoldWeightPlayerOpponentPerformance");
             totalGoldWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
 
-            var totalGoldCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("totalGoldCountVariance");
+            var totalGoldCountVariancePrior = Variable.Observed(Gamma.FromMeanAndVariance(1, 10 * 10));
+            var totalGoldCountVariance = Variable<double>.Random(totalGoldCountVariancePrior).Named("totalGoldCountVariance");
             totalGoldCountVariance.AddAttribute(new PointEstimate());
 
             // totalExperience
-            var totalExperienceWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("totalExperienceWeightPlayerPerformance");
+            var totalExperienceWeightPlayerPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(1, 10 * 10));
+            var totalExperienceWeightPlayerPerformance = Variable<double>.Random(totalExperienceWeightPlayerPerformancePrior).Named("totalExperienceWeightPlayerPerformance");
             totalExperienceWeightPlayerPerformance.AddAttribute(new PointEstimate());
 
-            var totalExperienceWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("totalExperienceWeightPlayerOpponentPerformance");
+            var totalExperienceWeightPlayerOpponentPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 10 * 10));
+            var totalExperienceWeightPlayerOpponentPerformance = Variable<double>.Random(totalExperienceWeightPlayerOpponentPerformancePrior).Named("totalExperienceWeightPlayerOpponentPerformance");
             totalExperienceWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
 
-            var totalExperienceCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("totalExperienceCountVariance");
+            var totalExperienceCountVariancePrior = Variable.Observed(Gamma.FromMeanAndVariance(1, 10 * 10));
+            var totalExperienceCountVariance = Variable<double>.Random(totalExperienceCountVariancePrior).Named("totalExperienceCountVariance");
             totalExperienceCountVariance.AddAttribute(new PointEstimate());
 
             // towerDamage
-            var towerDamageWeightPlayerPerformance = Variable.GaussianFromMeanAndVariance(1, 10 * 10).Named("towerDamageWeightPlayerPerformance");
+            var towerDamageWeightPlayerPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(1, 10 * 10));
+            var towerDamageWeightPlayerPerformance = Variable<double>.Random(towerDamageWeightPlayerPerformancePrior).Named("towerDamageWeightPlayerPerformance");
             towerDamageWeightPlayerPerformance.AddAttribute(new PointEstimate());
 
-            var towerDamageWeightPlayerOpponentPerformance = Variable.GaussianFromMeanAndVariance(-1, 10 * 10).Named("towerDamageWeightPlayerOpponentPerformance");
+            var towerDamageWeightPlayerOpponentPerformancePrior = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 10 * 10));
+            var towerDamageWeightPlayerOpponentPerformance = Variable<double>.Random(towerDamageWeightPlayerOpponentPerformancePrior).Named("towerDamageWeightPlayerOpponentPerformance");
             towerDamageWeightPlayerOpponentPerformance.AddAttribute(new PointEstimate());
 
-            var towerDamageCountVariance = Variable.GammaFromMeanAndVariance(1, 10 * 10).Named("towerDamageCountVariance");
+            var towerDamageCountVariancePrior = Variable.Observed(Gamma.FromMeanAndVariance(1, 10 * 10));
+            var towerDamageCountVariance = Variable<double>.Random(towerDamageCountVariancePrior).Named("towerDamageCountVariance");
             towerDamageCountVariance.AddAttribute(new PointEstimate());
 
             #endregion
@@ -258,6 +318,7 @@ namespace ts.core
             // Ranges to loop through the data: [matches][teams][players]
             var allPlayers = new Range(numOfPlayers).Named("allPlayers");
             var allMatches = new Range(batchLength).Named("allMatches");
+            // allMatches.AddAttribute(new Sequential());
             var nPlayersPerTeam = new Range(5).Named("nPlayersPerTeam");
             var nTeamsPerMatch = new Range(2).Named("nTeamsPerMatch");
             var teamSize = Variable.Observed(5.0).Named("teamSize");
@@ -266,7 +327,7 @@ namespace ts.core
 
             #region "Matches & Outcomes"
 
-            // Array to hold the player lookup table. With this array player's details can be found in the skills array (to be defined later)
+            // Array to hold the player lookup table. Let's us know which players played in which match
             var matches = Variable.Array(Variable.Array(Variable.Array<int>(nPlayersPerTeam), nTeamsPerMatch), allMatches).Named("matches");
 
             // Array to hold the index of the winning and losing team in each match
@@ -591,28 +652,30 @@ namespace ts.core
                 ShowFactorGraph = false, Algorithm = new ExpectationPropagation(), NumberOfIterations = 100, ModelName = "TrueSkill2",
                 Compiler =
                 {
-                    IncludeDebugInformation = true,
-                    GenerateInMemory = false,
-                    WriteSourceFiles = true,
+                    IncludeDebugInformation = false,
+                    GenerateInMemory = true,
+                    WriteSourceFiles = false,
                     ShowWarnings = false,
+                    ShowProgress = false,
+                    ShowSchedule = false,
                     GeneratedSourceFolder = "/mnt/win/Andris/Work/WIN/trueskill/ts.core/generated_source/",
-                    UseParallelForLoops = false
+                    UseParallelForLoops = true
                 },
-                OptimiseForVariables = new List<IVariable>
-                {
-                    skills,
-                    skillClassWidth,
-                    skillDynamics,
-                    skillSharpnessDecrease,
-
-                    killWeightPlayerPerformance,
-                    killWeightPlayerOpponentPerformance,
-                    killCountVariance,
-
-                    deathWeightPlayerPerformance,
-                    deathWeightPlayerOpponentPerformance,
-                    deathCountVariance
-                }
+                // OptimiseForVariables = new List<IVariable>
+                // {
+                //     skills,
+                //     skillClassWidth,
+                //     skillDynamics,
+                //     skillSharpnessDecrease,
+                //
+                //     killWeightPlayerPerformance,
+                //     killWeightPlayerOpponentPerformance,
+                //     killCountVariance,
+                //
+                //     deathWeightPlayerPerformance,
+                //     deathWeightPlayerOpponentPerformance,
+                //     deathCountVariance
+                // }
             };
             inferenceEngine.Compiler.GivePriorityTo(typeof(GaussianFromMeanAndVarianceOp_PointVariance));
             // inferenceEngine.Compiler.GivePriorityTo(typeof(GaussianProductOp_PointB));
@@ -621,7 +684,7 @@ namespace ts.core
             var rawMatches = ReadMatchesFromFile("/mnt/win/Andris/Work/WIN/trueskill/ts.core/sorted_dota2_ts2.json");
             // var rawMatches = ReadMatchesFromFile("/mnt/win/Andris/Work/WIN/trueskill/ts.core/small.json");
 
-            var batchSize = 32873;
+            const int batchSize = 1; // total matches: 32873
 
             // dictionary keeping track of player skills
             var playerSkill = new Dictionary<long, Gaussian>();
@@ -629,10 +692,11 @@ namespace ts.core
             // dictionary keeping tack of the last time a player has played
             var globalPlayerLastPlayed = new Dictionary<long, DateTime>();
 
+
+            var preMatchSkills = new List<Gaussian[]>();
+            var preMatchSteamIds = new List<Dictionary<long, int>>();
             foreach (var batch in rawMatches.Batch(batchSize))
             {
-                // batchSize = batch.Count();
-
                 var steamIdToIndex = new Dictionary<long, int>();
                 var indexToSteamId = new Dictionary<int, long>();
 
@@ -890,6 +954,10 @@ namespace ts.core
                     batchLosers[matchIndex] = match.radiant_win ? 1 : 0;
                 }
 
+                
+                preMatchSkills.Add(batchPriors.ToArray());
+                preMatchSteamIds.Add(steamIdToIndex);
+
                 // process this batch with TS2
 
                 #region Constants
@@ -937,7 +1005,7 @@ namespace ts.core
                 isTotalExperienceCountMissing.ObservedValue = batchIsTotalExperienceCountMissing;
                 towerDamageCounts.ObservedValue = batchTowerDamageCounts;
                 isTowerDamageCountMissing.ObservedValue = batchIsTowerDamageCountMissing;
-                        
+
                 #endregion
 
                 #region Matches & Outcomes
@@ -969,23 +1037,198 @@ namespace ts.core
                 foreach (var (i, skillOverTime) in inferredSkills.Enumerate()) playerSkill[indexToSteamId[i]] = skillOverTime.Last();
 
                 // update the parameters
-                Console.WriteLine($"killClassWidth: {inferenceEngine.Infer<Gamma>(skillClassWidth)}");
-                Console.WriteLine($"killDynamics: {inferenceEngine.Infer<Gamma>(skillDynamics)}");
-                Console.WriteLine($"killSharpnessDecrease: {inferenceEngine.Infer<Gamma>(skillSharpnessDecrease)}");
+                var skillClassWidthPriorValue = inferenceEngine.Infer<Gamma>(skillClassWidth);
+                var skillDynamicsPriorValue = inferenceEngine.Infer<Gamma>(skillDynamics);
+                var skillSharpnessDecreasePriorValue = inferenceEngine.Infer<Gamma>(skillSharpnessDecrease);
+                var killWeightPlayerPerformancePriorValue = inferenceEngine.Infer<Gaussian>(killWeightPlayerPerformance);
+                var killWeightPlayerOpponentPerformancePriorValue = inferenceEngine.Infer<Gaussian>(killWeightPlayerOpponentPerformance);
+                var killCountVariancePriorValue = inferenceEngine.Infer<Gamma>(killCountVariance);
+                var deathWeightPlayerPerformancePriorValue = inferenceEngine.Infer<Gaussian>(deathWeightPlayerPerformance);
+                var deathWeightPlayerOpponentPerformancePriorValue = inferenceEngine.Infer<Gaussian>(deathWeightPlayerOpponentPerformance);
+                var deathCountVariancePriorValue = inferenceEngine.Infer<Gamma>(deathCountVariance);
+                var assistsWeightPlayerPerformancePriorValue = inferenceEngine.Infer<Gaussian>(assistsWeightPlayerPerformance);
+                var assistsWeightPlayerOpponentPerformancePriorValue = inferenceEngine.Infer<Gaussian>(assistsWeightPlayerOpponentPerformance);
+                var assistsCountVariancePriorValue = inferenceEngine.Infer<Gamma>(assistsCountVariance);
+                var campsStackedWeightPlayerPerformancePriorValue = inferenceEngine.Infer<Gaussian>(campsStackedWeightPlayerPerformance);
+                var campsStackedWeightPlayerOpponentPerformancePriorValue = inferenceEngine.Infer<Gaussian>(campsStackedWeightPlayerOpponentPerformance);
+                var campsStackedCountVariancePriorValue = inferenceEngine.Infer<Gamma>(campsStackedCountVariance);
+                var deniesWeightPlayerPerformancePriorValue = inferenceEngine.Infer<Gaussian>(deniesWeightPlayerPerformance);
+                var deniesWeightPlayerOpponentPerformancePriorValue = inferenceEngine.Infer<Gaussian>(deniesWeightPlayerOpponentPerformance);
+                var deniesCountVariancePriorValue = inferenceEngine.Infer<Gamma>(deniesCountVariance);
+                var goldSpentWeightPlayerPerformancePriorValue = inferenceEngine.Infer<Gaussian>(goldSpentWeightPlayerPerformance);
+                var goldSpentWeightPlayerOpponentPerformancePriorValue = inferenceEngine.Infer<Gaussian>(goldSpentWeightPlayerOpponentPerformance);
+                var goldSpentCountVariancePriorValue = inferenceEngine.Infer<Gamma>(goldSpentCountVariance);
+                var heroDamageWeightPlayerPerformancePriorValue = inferenceEngine.Infer<Gaussian>(heroDamageWeightPlayerPerformance);
+                var heroDamageWeightPlayerOpponentPerformancePriorValue = inferenceEngine.Infer<Gaussian>(heroDamageWeightPlayerOpponentPerformance);
+                var heroDamageCountVariancePriorValue = inferenceEngine.Infer<Gamma>(heroDamageCountVariance);
+                var heroHealingWeightPlayerPerformancePriorValue = inferenceEngine.Infer<Gaussian>(heroHealingWeightPlayerPerformance);
+                var heroHealingWeightPlayerOpponentPerformancePriorValue = inferenceEngine.Infer<Gaussian>(heroHealingWeightPlayerOpponentPerformance);
+                var heroHealingCountVariancePriorValue = inferenceEngine.Infer<Gamma>(heroHealingCountVariance);
+                var lastHitsWeightPlayerPerformancePriorValue = inferenceEngine.Infer<Gaussian>(lastHitsWeightPlayerPerformance);
+                var lastHitsWeightPlayerOpponentPerformancePriorValue = inferenceEngine.Infer<Gaussian>(lastHitsWeightPlayerOpponentPerformance);
+                var lastHitsCountVariancePriorValue = inferenceEngine.Infer<Gamma>(lastHitsCountVariance);
+                var observersPlacedWeightPlayerPerformancePriorValue = inferenceEngine.Infer<Gaussian>(observersPlacedWeightPlayerPerformance);
+                var observersPlacedWeightPlayerOpponentPerformancePriorValue = inferenceEngine.Infer<Gaussian>(observersPlacedWeightPlayerOpponentPerformance);
+                var observersPlacedCountVariancePriorValue = inferenceEngine.Infer<Gamma>(observersPlacedCountVariance);
+                var observerKillsWeightPlayerPerformancePriorValue = inferenceEngine.Infer<Gaussian>(observerKillsWeightPlayerPerformance);
+                var observerKillsWeightPlayerOpponentPerformancePriorValue = inferenceEngine.Infer<Gaussian>(observerKillsWeightPlayerOpponentPerformance);
+                var observerKillsCountVariancePriorValue = inferenceEngine.Infer<Gamma>(observerKillsCountVariance);
+                var sentriesPlacedWeightPlayerPerformancePriorValue = inferenceEngine.Infer<Gaussian>(sentriesPlacedWeightPlayerPerformance);
+                var sentriesPlacedWeightPlayerOpponentPerformancePriorValue = inferenceEngine.Infer<Gaussian>(sentriesPlacedWeightPlayerOpponentPerformance);
+                var sentriesPlacedCountVariancePriorValue = inferenceEngine.Infer<Gamma>(sentriesPlacedCountVariance);
+                var sentryKillsWeightPlayerPerformancePriorValue = inferenceEngine.Infer<Gaussian>(sentryKillsWeightPlayerPerformance);
+                var sentryKillsWeightPlayerOpponentPerformancePriorValue = inferenceEngine.Infer<Gaussian>(sentryKillsWeightPlayerOpponentPerformance);
+                var sentryKillsCountVariancePriorValue = inferenceEngine.Infer<Gamma>(sentryKillsCountVariance);
+                var stunsWeightPlayerPerformancePriorValue = inferenceEngine.Infer<Gaussian>(stunsWeightPlayerPerformance);
+                var stunsWeightPlayerOpponentPerformancePriorValue = inferenceEngine.Infer<Gaussian>(stunsWeightPlayerOpponentPerformance);
+                var stunsCountVariancePriorValue = inferenceEngine.Infer<Gamma>(stunsCountVariance);
+                var teamfightParticipationWeightPlayerPerformancePriorValue = inferenceEngine.Infer<Gaussian>(teamfightParticipationWeightPlayerPerformance);
+                var teamfightParticipationWeightPlayerOpponentPerformancePriorValue = inferenceEngine.Infer<Gaussian>(teamfightParticipationWeightPlayerOpponentPerformance);
+                var teamfightParticipationCountVariancePriorValue = inferenceEngine.Infer<Gamma>(teamfightParticipationCountVariance);
+                var totalGoldWeightPlayerPerformancePriorValue = inferenceEngine.Infer<Gaussian>(totalGoldWeightPlayerPerformance);
+                var totalGoldWeightPlayerOpponentPerformancePriorValue = inferenceEngine.Infer<Gaussian>(totalGoldWeightPlayerOpponentPerformance);
+                var totalGoldCountVariancePriorValue = inferenceEngine.Infer<Gamma>(totalGoldCountVariance);
+                var totalExperienceWeightPlayerPerformancePriorValue = inferenceEngine.Infer<Gaussian>(totalExperienceWeightPlayerPerformance);
+                var totalExperienceWeightPlayerOpponentPerformancePriorValue = inferenceEngine.Infer<Gaussian>(totalExperienceWeightPlayerOpponentPerformance);
+                var totalExperienceCountVariancePriorValue = inferenceEngine.Infer<Gamma>(totalExperienceCountVariance);
+                var towerDamageWeightPlayerPerformancePriorValue = inferenceEngine.Infer<Gaussian>(towerDamageWeightPlayerPerformance);
+                var towerDamageWeightPlayerOpponentPerformancePriorValue = inferenceEngine.Infer<Gaussian>(towerDamageWeightPlayerOpponentPerformance);
+                var towerDamageCountVariancePriorValue = inferenceEngine.Infer<Gamma>(towerDamageCountVariance);
+                
+                skillClassWidthPrior.ObservedValue = skillClassWidthPriorValue;
+                skillDynamicsPrior.ObservedValue = skillDynamicsPriorValue;
+                skillSharpnessDecreasePrior.ObservedValue = skillSharpnessDecreasePriorValue;
+                killWeightPlayerPerformancePrior.ObservedValue = killWeightPlayerPerformancePriorValue;
+                killWeightPlayerOpponentPerformancePrior.ObservedValue = killWeightPlayerOpponentPerformancePriorValue;
+                killCountVariancePrior.ObservedValue = killCountVariancePriorValue;
+                deathWeightPlayerPerformancePrior.ObservedValue = deathWeightPlayerPerformancePriorValue;
+                deathWeightPlayerOpponentPerformancePrior.ObservedValue = deathWeightPlayerOpponentPerformancePriorValue;
+                deathCountVariancePrior.ObservedValue = deathCountVariancePriorValue;
+                assistsWeightPlayerPerformancePrior.ObservedValue = assistsWeightPlayerPerformancePriorValue;
+                assistsWeightPlayerOpponentPerformancePrior.ObservedValue = assistsWeightPlayerOpponentPerformancePriorValue;
+                assistsCountVariancePrior.ObservedValue = assistsCountVariancePriorValue;
+                campsStackedWeightPlayerPerformancePrior.ObservedValue = campsStackedWeightPlayerPerformancePriorValue;
+                campsStackedWeightPlayerOpponentPerformancePrior.ObservedValue = campsStackedWeightPlayerOpponentPerformancePriorValue;
+                campsStackedCountVariancePrior.ObservedValue = campsStackedCountVariancePriorValue;
+                deniesWeightPlayerPerformancePrior.ObservedValue = deniesWeightPlayerPerformancePriorValue;
+                deniesWeightPlayerOpponentPerformancePrior.ObservedValue = deniesWeightPlayerOpponentPerformancePriorValue;
+                deniesCountVariancePrior.ObservedValue = deniesCountVariancePriorValue;
+                goldSpentWeightPlayerPerformancePrior.ObservedValue = goldSpentWeightPlayerPerformancePriorValue;
+                goldSpentWeightPlayerOpponentPerformancePrior.ObservedValue = goldSpentWeightPlayerOpponentPerformancePriorValue;
+                goldSpentCountVariancePrior.ObservedValue = goldSpentCountVariancePriorValue;
+                heroDamageWeightPlayerPerformancePrior.ObservedValue = heroDamageWeightPlayerPerformancePriorValue;
+                heroDamageWeightPlayerOpponentPerformancePrior.ObservedValue = heroDamageWeightPlayerOpponentPerformancePriorValue;
+                heroDamageCountVariancePrior.ObservedValue = heroDamageCountVariancePriorValue;
+                heroHealingWeightPlayerPerformancePrior.ObservedValue = heroHealingWeightPlayerPerformancePriorValue;
+                heroHealingWeightPlayerOpponentPerformancePrior.ObservedValue = heroHealingWeightPlayerOpponentPerformancePriorValue;
+                heroHealingCountVariancePrior.ObservedValue = heroHealingCountVariancePriorValue;
+                lastHitsWeightPlayerPerformancePrior.ObservedValue = lastHitsWeightPlayerPerformancePriorValue;
+                lastHitsWeightPlayerOpponentPerformancePrior.ObservedValue = lastHitsWeightPlayerOpponentPerformancePriorValue;
+                lastHitsCountVariancePrior.ObservedValue = lastHitsCountVariancePriorValue;
+                observersPlacedWeightPlayerPerformancePrior.ObservedValue = observersPlacedWeightPlayerPerformancePriorValue;
+                observersPlacedWeightPlayerOpponentPerformancePrior.ObservedValue = observersPlacedWeightPlayerOpponentPerformancePriorValue;
+                observersPlacedCountVariancePrior.ObservedValue = observersPlacedCountVariancePriorValue;
+                observerKillsWeightPlayerPerformancePrior.ObservedValue = observerKillsWeightPlayerPerformancePriorValue;
+                observerKillsWeightPlayerOpponentPerformancePrior.ObservedValue = observerKillsWeightPlayerOpponentPerformancePriorValue;
+                observerKillsCountVariancePrior.ObservedValue = observerKillsCountVariancePriorValue;
+                sentriesPlacedWeightPlayerPerformancePrior.ObservedValue = sentriesPlacedWeightPlayerPerformancePriorValue;
+                sentriesPlacedWeightPlayerOpponentPerformancePrior.ObservedValue = sentriesPlacedWeightPlayerOpponentPerformancePriorValue;
+                sentriesPlacedCountVariancePrior.ObservedValue = sentriesPlacedCountVariancePriorValue;
+                sentryKillsWeightPlayerPerformancePrior.ObservedValue = sentryKillsWeightPlayerPerformancePriorValue;
+                sentryKillsWeightPlayerOpponentPerformancePrior.ObservedValue = sentryKillsWeightPlayerOpponentPerformancePriorValue;
+                sentryKillsCountVariancePrior.ObservedValue = sentryKillsCountVariancePriorValue;
+                stunsWeightPlayerPerformancePrior.ObservedValue = stunsWeightPlayerPerformancePriorValue;
+                stunsWeightPlayerOpponentPerformancePrior.ObservedValue = stunsWeightPlayerOpponentPerformancePriorValue;
+                stunsCountVariancePrior.ObservedValue = stunsCountVariancePriorValue;
+                teamfightParticipationWeightPlayerPerformancePrior.ObservedValue = teamfightParticipationWeightPlayerPerformancePriorValue;
+                teamfightParticipationWeightPlayerOpponentPerformancePrior.ObservedValue = teamfightParticipationWeightPlayerOpponentPerformancePriorValue;
+                teamfightParticipationCountVariancePrior.ObservedValue = teamfightParticipationCountVariancePriorValue;
+                totalGoldWeightPlayerPerformancePrior.ObservedValue = totalGoldWeightPlayerPerformancePriorValue;
+                totalGoldWeightPlayerOpponentPerformancePrior.ObservedValue = totalGoldWeightPlayerOpponentPerformancePriorValue;
+                totalGoldCountVariancePrior.ObservedValue = totalGoldCountVariancePriorValue;
+                totalExperienceWeightPlayerPerformancePrior.ObservedValue = totalExperienceWeightPlayerPerformancePriorValue;
+                totalExperienceWeightPlayerOpponentPerformancePrior.ObservedValue = totalExperienceWeightPlayerOpponentPerformancePriorValue;
+                totalExperienceCountVariancePrior.ObservedValue = totalExperienceCountVariancePriorValue;
+                towerDamageWeightPlayerPerformancePrior.ObservedValue = towerDamageWeightPlayerPerformancePriorValue;
+                towerDamageWeightPlayerOpponentPerformancePrior.ObservedValue = towerDamageWeightPlayerOpponentPerformancePriorValue;
+                towerDamageCountVariancePrior.ObservedValue = towerDamageCountVariancePriorValue;
 
-                Console.WriteLine($"killWeightPlayerPerformance: {inferenceEngine.Infer<Gaussian>(killWeightPlayerPerformance)}");
-                Console.WriteLine($"killWeightPlayerOpponentPerformance: {inferenceEngine.Infer<Gaussian>(killWeightPlayerOpponentPerformance)}");
-                Console.WriteLine($"killCountVariance: {inferenceEngine.Infer<Gamma>(killCountVariance)}");
-
-                Console.WriteLine($"deathWeightPlayerPerformance: {inferenceEngine.Infer<Gaussian>(deathWeightPlayerPerformance)}");
-                Console.WriteLine($"deathWeightPlayerOpponentPerformance: {inferenceEngine.Infer<Gaussian>(deathWeightPlayerOpponentPerformance)}");
-                Console.WriteLine($"deathCountVariance: {inferenceEngine.Infer<Gamma>(deathCountVariance)}");
             }
 
-            using (var file = File.CreateText($"/mnt/win/Andris/Work/WIN/trueskill/tests/ratings_{inferenceEngine.NumberOfIterations}_iteration.json"))
+            
+            using (var file = File.CreateText($"/mnt/win/Andris/Work/WIN/trueskill/tests/pre_match_ratings_online_mode.json"))
             {
-                new JsonSerializer().Serialize(file, playerSkill);
+                new JsonSerializer().Serialize(file, preMatchSkills);
             }
+            
+            using (var file = File.CreateText($"/mnt/win/Andris/Work/WIN/trueskill/tests/pre_match_steam_ids_online_mode.json"))
+            {
+                new JsonSerializer().Serialize(file, preMatchSteamIds);
+            }
+            
+            // using (var file = File.CreateText($"/mnt/win/Andris/Work/WIN/trueskill/tests/ratings_{inferenceEngine.NumberOfIterations}_iteration.json"))
+            // {
+            //     new JsonSerializer().Serialize(file, playerSkill);
+            // }
+            
+            // Console.WriteLine($"skillClassWidth: {skillClassWidthPrior.ObservedValue}");
+            // Console.WriteLine($"skillDynamics: {skillDynamicsPrior.ObservedValue}");
+            // Console.WriteLine($"skillSharpnessDecrease: {skillSharpnessDecreasePrior.ObservedValue}");
+            // Console.WriteLine($"killWeightPlayerPerformance: {killWeightPlayerPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"killWeightPlayerOpponentPerformance: {killWeightPlayerOpponentPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"killCountVariance: {killCountVariancePrior.ObservedValue}");
+            // Console.WriteLine($"deathWeightPlayerPerformance: {deathWeightPlayerPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"deathWeightPlayerOpponentPerformance: {deathWeightPlayerOpponentPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"deathCountVariance: {deathCountVariancePrior.ObservedValue}");
+            // Console.WriteLine($"assistsWeightPlayerPerformance: {assistsWeightPlayerPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"assistsWeightPlayerOpponentPerformance: {assistsWeightPlayerOpponentPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"assistsCountVariance: {assistsCountVariancePrior.ObservedValue}");
+            // Console.WriteLine($"campsStackedWeightPlayerPerformance: {campsStackedWeightPlayerPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"campsStackedWeightPlayerOpponentPerformance: {campsStackedWeightPlayerOpponentPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"campsStackedCountVariance: {campsStackedCountVariancePrior.ObservedValue}");
+            // Console.WriteLine($"deniesWeightPlayerPerformance: {deniesWeightPlayerPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"deniesWeightPlayerOpponentPerformance: {deniesWeightPlayerOpponentPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"deniesCountVariance: {deniesCountVariancePrior.ObservedValue}");
+            // Console.WriteLine($"goldSpentWeightPlayerPerformance: {goldSpentWeightPlayerPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"goldSpentWeightPlayerOpponentPerformance: {goldSpentWeightPlayerOpponentPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"goldSpentCountVariance: {goldSpentCountVariancePrior.ObservedValue}");
+            // Console.WriteLine($"heroDamageWeightPlayerPerformance: {heroDamageWeightPlayerPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"heroDamageWeightPlayerOpponentPerformance: {heroDamageWeightPlayerOpponentPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"heroDamageCountVariance: {heroDamageCountVariancePrior.ObservedValue}");
+            // Console.WriteLine($"heroHealingWeightPlayerPerformance: {heroHealingWeightPlayerPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"heroHealingWeightPlayerOpponentPerformance: {heroHealingWeightPlayerOpponentPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"heroHealingCountVariance: {heroHealingCountVariancePrior.ObservedValue}");
+            // Console.WriteLine($"lastHitsWeightPlayerPerformance: {lastHitsWeightPlayerPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"lastHitsWeightPlayerOpponentPerformance: {lastHitsWeightPlayerOpponentPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"lastHitsCountVariance: {lastHitsCountVariancePrior.ObservedValue}");
+            // Console.WriteLine($"observersPlacedWeightPlayerPerformance: {observersPlacedWeightPlayerPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"observersPlacedWeightPlayerOpponentPerformance: {observersPlacedWeightPlayerOpponentPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"observersPlacedCountVariance: {observersPlacedCountVariancePrior.ObservedValue}");
+            // Console.WriteLine($"observerKillsWeightPlayerPerformance: {observerKillsWeightPlayerPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"observerKillsWeightPlayerOpponentPerformance: {observerKillsWeightPlayerOpponentPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"observerKillsCountVariance: {observerKillsCountVariancePrior.ObservedValue}");
+            // Console.WriteLine($"sentriesPlacedWeightPlayerPerformance: {sentriesPlacedWeightPlayerPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"sentriesPlacedWeightPlayerOpponentPerformance: {sentriesPlacedWeightPlayerOpponentPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"sentriesPlacedCountVariance: {sentriesPlacedCountVariancePrior.ObservedValue}");
+            // Console.WriteLine($"sentryKillsWeightPlayerPerformance: {sentryKillsWeightPlayerPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"sentryKillsWeightPlayerOpponentPerformance: {sentryKillsWeightPlayerOpponentPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"sentryKillsCountVariance: {sentryKillsCountVariancePrior.ObservedValue}");
+            // Console.WriteLine($"stunsWeightPlayerPerformance: {stunsWeightPlayerPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"stunsWeightPlayerOpponentPerformance: {stunsWeightPlayerOpponentPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"stunsCountVariance: {stunsCountVariancePrior.ObservedValue}");
+            // Console.WriteLine($"teamfightParticipationWeightPlayerPerformance: {teamfightParticipationWeightPlayerPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"teamfightParticipationWeightPlayerOpponentPerformance: {teamfightParticipationWeightPlayerOpponentPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"teamfightParticipationCountVariance: {teamfightParticipationCountVariancePrior.ObservedValue}");
+            // Console.WriteLine($"totalGoldWeightPlayerPerformance: {totalGoldWeightPlayerPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"totalGoldWeightPlayerOpponentPerformance: {totalGoldWeightPlayerOpponentPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"totalGoldCountVariance: {totalGoldCountVariancePrior.ObservedValue}");
+            // Console.WriteLine($"totalExperienceWeightPlayerPerformance: {totalExperienceWeightPlayerPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"totalExperienceWeightPlayerOpponentPerformance: {totalExperienceWeightPlayerOpponentPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"totalExperienceCountVariance: {totalExperienceCountVariancePrior.ObservedValue}");
+            // Console.WriteLine($"towerDamageWeightPlayerPerformance: {towerDamageWeightPlayerPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"towerDamageWeightPlayerOpponentPerformance: {towerDamageWeightPlayerOpponentPerformancePrior.ObservedValue}");
+            // Console.WriteLine($"towerDamageCountVariance: {towerDamageCountVariancePrior.ObservedValue}");
+
         }
 
         private static double Validate(double? value, double min = 0, double max = double.PositiveInfinity)
@@ -995,8 +1238,7 @@ namespace ts.core
 
         private static bool IsValueMissing(double? value, double min = 0, double max = double.PositiveInfinity)
         {
-            return (value == null || value < min || value > max);
-
+            return value == null || value < min || value > max;
         }
     }
 }
