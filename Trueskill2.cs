@@ -8,42 +8,42 @@ using Microsoft.ML.Probabilistic.Factors;
 using Microsoft.ML.Probabilistic.Models;
 using Microsoft.ML.Probabilistic.Models.Attributes;
 using Newtonsoft.Json;
-
 // ReSharper disable PossibleInvalidOperationException
 
 namespace ts.core
 {
     public static class Trueskill2
     {
-        private static IEnumerable<Match> ReadMatchesFromFile(string fileName)
-        {
-            using (var r = new StreamReader(fileName))
-            {
-                Console.Write("Reading matches from file...");
-                var matchesByDate = JsonConvert.DeserializeObject<Dictionary<string, List<Match>>>(r.ReadToEnd());
-                Console.WriteLine("OK.");
-
-                // set up matches as a chronological list
-                Console.Write("Setting up chronological match order...");
-                var matches = new List<Match>();
-
-                foreach (var matchesOnDate in matchesByDate)
-                foreach (var match in matchesOnDate.Value)
-                {
-                    match.date = Convert.ToDateTime(matchesOnDate.Key);
-
-                    if (match.radiant.Union(match.dire).All(player => player.steam_id != null)) matches.Add(match);
-                }
-
-                Console.WriteLine("OK.");
-
-                return matches.OrderBy(x => x.match_id);
-            }
-        }
-
         /// <summary>
         /// This method runs a TrueSkill2 model based on the paper "TrueSkill 2:  An improved Bayesian skill rating system" [Minka et al, 2018].
+        /// The data used for training is a sample from a larger Dota2 dataset collected from opendota.com
+        /// The main difference(s) between this implementation and the one mentioned in the paper are the inclusion of stats other than kills/deaths.
+        /// The extra stats include assists, total gold acquired, number of stuns, etc. Hopefully they improve the ratings further, if not they can always be excluded.
+        /// Since each stat is modelled after the implementation of kills/deaths in the paper, each one of them require 3 additional parameters to learn:
+        /// A weight for the player performance in that match, a weight for the performance of the opposing _team_ in that match, these two are used for the calculation
+        /// of the mean of distribution for that stat) and a variance for the distribution used for modelling the stat.
+        /// For each parameters, priors are meant to be broad, but maybe I messed them up somehow?
         /// 
+        /// As per the paper + my own Dota2 specific modifications, we model the following things:
+        /// - Latent player skill: N ~ (μ, σ) which is their expected contribution to the team.
+        /// - Performance: noisy version of skill, specific to a game. Noise is defined by the skillClassWidth parameter β.
+        /// - TS1/2 deals with partial play, we don't do that here, because in pro Dota2 matches there's no partial play (all weights are 1).
+        /// - The winning team's performance is constrained to be higher than the loser's. There are no draws in Dota2 (epsilon draw margin is 0).
+        /// - There's a separate skill variable for each _match_ for a specific player, this follows the Trueskill Through Time model, except there the players only had
+        ///   a dedicated skill variable for each year they played.
+        /// - After each match we assume that each player (probably) improves in skill, so we add an additive γ term to the variance of the latent skills after each match.
+        ///   This also prevents their skill distribution collapsing to a point mass, so there's always a little uncertainty (and dynamicity) about their skill.
+        /// - Players' skill decreases as time passes, which is controlled by the `skillSharpnessDecrease` variable τ.
+        /// - No quit penalty (no quitting in pro matches)
+        /// - No experience or squad offset
+        /// - Stats all follow the same model:
+        ///     - The player's latent skill is inferrred from their individual statistics such as kill, death, sentries placed, assists, total damage, etc. plus team win/loss.
+        ///     - The all follow the following formula of equation (9) on top of page 16. of the TrueSkill2 [Minka et al, 2018] paper. Which is:
+        ///             value for stat for the i-th player ∼ max(0, N(player_performance_weight * player_performance + opponent_team_performance_weight * opponent_team_performance, stat_specific_weight * match_length))
+        ///
+        /// The code implements batching of matches, so both batch mode and online mode (which I think is the equivalent of a batch size of 1) are possible.
+        /// Right now the full training set of 32873 Dota2 matches fit memory, but with smaller batches online learning is possible as well.
+        ///     - For online learning we infer the distribution of each variable and set them as observed values for the parameter priors after each batch.
         /// </summary>
         public static void Run()
         {
@@ -652,49 +652,26 @@ namespace ts.core
                 ShowFactorGraph = false, Algorithm = new ExpectationPropagation(), NumberOfIterations = 100, ModelName = "TrueSkill2",
                 Compiler =
                 {
-                    IncludeDebugInformation = false,
+                    IncludeDebugInformation = true,
                     GenerateInMemory = true,
                     WriteSourceFiles = false,
-                    ShowWarnings = false,
-                    ShowProgress = false,
-                    ShowSchedule = false,
-                    GeneratedSourceFolder = "/mnt/win/Andris/Work/WIN/trueskill/ts.core/generated_source/",
                     UseParallelForLoops = true
                 },
-                // OptimiseForVariables = new List<IVariable>
-                // {
-                //     skills,
-                //     skillClassWidth,
-                //     skillDynamics,
-                //     skillSharpnessDecrease,
-                //
-                //     killWeightPlayerPerformance,
-                //     killWeightPlayerOpponentPerformance,
-                //     killCountVariance,
-                //
-                //     deathWeightPlayerPerformance,
-                //     deathWeightPlayerOpponentPerformance,
-                //     deathCountVariance
-                // }
             };
             inferenceEngine.Compiler.GivePriorityTo(typeof(GaussianFromMeanAndVarianceOp_PointVariance));
             // inferenceEngine.Compiler.GivePriorityTo(typeof(GaussianProductOp_PointB));
             // inferenceEngine.Compiler.GivePriorityTo(typeof(GaussianProductOp_SHG09));
+            
+            var rawMatches = ReadMatchesFromFile("/mnt/win/Andris/Work/WIN/trueskill/ts.core/dota2_ts2_matches.json");
 
-            var rawMatches = ReadMatchesFromFile("/mnt/win/Andris/Work/WIN/trueskill/ts.core/sorted_dota2_ts2.json");
-            // var rawMatches = ReadMatchesFromFile("/mnt/win/Andris/Work/WIN/trueskill/ts.core/small.json");
-
-            const int batchSize = 1; // total matches: 32873
+            const int batchSize = 32873; // total matches: 32873
 
             // dictionary keeping track of player skills
             var playerSkill = new Dictionary<long, Gaussian>();
 
             // dictionary keeping tack of the last time a player has played
             var globalPlayerLastPlayed = new Dictionary<long, DateTime>();
-
-
-            var preMatchSkills = new List<Gaussian[]>();
-            var preMatchSteamIds = new List<Dictionary<long, int>>();
+            
             foreach (var batch in rawMatches.Batch(batchSize))
             {
                 var steamIdToIndex = new Dictionary<long, int>();
@@ -954,10 +931,6 @@ namespace ts.core
                     batchLosers[matchIndex] = match.radiant_win ? 1 : 0;
                 }
 
-                
-                preMatchSkills.Add(batchPriors.ToArray());
-                preMatchSteamIds.Add(steamIdToIndex);
-
                 // process this batch with TS2
 
                 #region Constants
@@ -1154,81 +1127,31 @@ namespace ts.core
                 towerDamageCountVariancePrior.ObservedValue = towerDamageCountVariancePriorValue;
 
             }
-
-            
-            using (var file = File.CreateText($"/mnt/win/Andris/Work/WIN/trueskill/tests/pre_match_ratings_online_mode.json"))
+        }
+        
+        private static IEnumerable<Match> ReadMatchesFromFile(string fileName)
+        {
+            using (var r = new StreamReader(fileName))
             {
-                new JsonSerializer().Serialize(file, preMatchSkills);
-            }
-            
-            using (var file = File.CreateText($"/mnt/win/Andris/Work/WIN/trueskill/tests/pre_match_steam_ids_online_mode.json"))
-            {
-                new JsonSerializer().Serialize(file, preMatchSteamIds);
-            }
-            
-            // using (var file = File.CreateText($"/mnt/win/Andris/Work/WIN/trueskill/tests/ratings_{inferenceEngine.NumberOfIterations}_iteration.json"))
-            // {
-            //     new JsonSerializer().Serialize(file, playerSkill);
-            // }
-            
-            // Console.WriteLine($"skillClassWidth: {skillClassWidthPrior.ObservedValue}");
-            // Console.WriteLine($"skillDynamics: {skillDynamicsPrior.ObservedValue}");
-            // Console.WriteLine($"skillSharpnessDecrease: {skillSharpnessDecreasePrior.ObservedValue}");
-            // Console.WriteLine($"killWeightPlayerPerformance: {killWeightPlayerPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"killWeightPlayerOpponentPerformance: {killWeightPlayerOpponentPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"killCountVariance: {killCountVariancePrior.ObservedValue}");
-            // Console.WriteLine($"deathWeightPlayerPerformance: {deathWeightPlayerPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"deathWeightPlayerOpponentPerformance: {deathWeightPlayerOpponentPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"deathCountVariance: {deathCountVariancePrior.ObservedValue}");
-            // Console.WriteLine($"assistsWeightPlayerPerformance: {assistsWeightPlayerPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"assistsWeightPlayerOpponentPerformance: {assistsWeightPlayerOpponentPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"assistsCountVariance: {assistsCountVariancePrior.ObservedValue}");
-            // Console.WriteLine($"campsStackedWeightPlayerPerformance: {campsStackedWeightPlayerPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"campsStackedWeightPlayerOpponentPerformance: {campsStackedWeightPlayerOpponentPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"campsStackedCountVariance: {campsStackedCountVariancePrior.ObservedValue}");
-            // Console.WriteLine($"deniesWeightPlayerPerformance: {deniesWeightPlayerPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"deniesWeightPlayerOpponentPerformance: {deniesWeightPlayerOpponentPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"deniesCountVariance: {deniesCountVariancePrior.ObservedValue}");
-            // Console.WriteLine($"goldSpentWeightPlayerPerformance: {goldSpentWeightPlayerPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"goldSpentWeightPlayerOpponentPerformance: {goldSpentWeightPlayerOpponentPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"goldSpentCountVariance: {goldSpentCountVariancePrior.ObservedValue}");
-            // Console.WriteLine($"heroDamageWeightPlayerPerformance: {heroDamageWeightPlayerPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"heroDamageWeightPlayerOpponentPerformance: {heroDamageWeightPlayerOpponentPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"heroDamageCountVariance: {heroDamageCountVariancePrior.ObservedValue}");
-            // Console.WriteLine($"heroHealingWeightPlayerPerformance: {heroHealingWeightPlayerPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"heroHealingWeightPlayerOpponentPerformance: {heroHealingWeightPlayerOpponentPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"heroHealingCountVariance: {heroHealingCountVariancePrior.ObservedValue}");
-            // Console.WriteLine($"lastHitsWeightPlayerPerformance: {lastHitsWeightPlayerPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"lastHitsWeightPlayerOpponentPerformance: {lastHitsWeightPlayerOpponentPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"lastHitsCountVariance: {lastHitsCountVariancePrior.ObservedValue}");
-            // Console.WriteLine($"observersPlacedWeightPlayerPerformance: {observersPlacedWeightPlayerPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"observersPlacedWeightPlayerOpponentPerformance: {observersPlacedWeightPlayerOpponentPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"observersPlacedCountVariance: {observersPlacedCountVariancePrior.ObservedValue}");
-            // Console.WriteLine($"observerKillsWeightPlayerPerformance: {observerKillsWeightPlayerPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"observerKillsWeightPlayerOpponentPerformance: {observerKillsWeightPlayerOpponentPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"observerKillsCountVariance: {observerKillsCountVariancePrior.ObservedValue}");
-            // Console.WriteLine($"sentriesPlacedWeightPlayerPerformance: {sentriesPlacedWeightPlayerPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"sentriesPlacedWeightPlayerOpponentPerformance: {sentriesPlacedWeightPlayerOpponentPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"sentriesPlacedCountVariance: {sentriesPlacedCountVariancePrior.ObservedValue}");
-            // Console.WriteLine($"sentryKillsWeightPlayerPerformance: {sentryKillsWeightPlayerPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"sentryKillsWeightPlayerOpponentPerformance: {sentryKillsWeightPlayerOpponentPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"sentryKillsCountVariance: {sentryKillsCountVariancePrior.ObservedValue}");
-            // Console.WriteLine($"stunsWeightPlayerPerformance: {stunsWeightPlayerPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"stunsWeightPlayerOpponentPerformance: {stunsWeightPlayerOpponentPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"stunsCountVariance: {stunsCountVariancePrior.ObservedValue}");
-            // Console.WriteLine($"teamfightParticipationWeightPlayerPerformance: {teamfightParticipationWeightPlayerPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"teamfightParticipationWeightPlayerOpponentPerformance: {teamfightParticipationWeightPlayerOpponentPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"teamfightParticipationCountVariance: {teamfightParticipationCountVariancePrior.ObservedValue}");
-            // Console.WriteLine($"totalGoldWeightPlayerPerformance: {totalGoldWeightPlayerPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"totalGoldWeightPlayerOpponentPerformance: {totalGoldWeightPlayerOpponentPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"totalGoldCountVariance: {totalGoldCountVariancePrior.ObservedValue}");
-            // Console.WriteLine($"totalExperienceWeightPlayerPerformance: {totalExperienceWeightPlayerPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"totalExperienceWeightPlayerOpponentPerformance: {totalExperienceWeightPlayerOpponentPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"totalExperienceCountVariance: {totalExperienceCountVariancePrior.ObservedValue}");
-            // Console.WriteLine($"towerDamageWeightPlayerPerformance: {towerDamageWeightPlayerPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"towerDamageWeightPlayerOpponentPerformance: {towerDamageWeightPlayerOpponentPerformancePrior.ObservedValue}");
-            // Console.WriteLine($"towerDamageCountVariance: {towerDamageCountVariancePrior.ObservedValue}");
+                Console.Write("Reading matches from file...");
+                var matchesByDate = JsonConvert.DeserializeObject<Dictionary<string, List<Match>>>(r.ReadToEnd());
+                Console.WriteLine("OK.");
 
+                // set up matches as a chronological list
+                Console.Write("Setting up chronological match order...");
+                var matches = new List<Match>();
+
+                foreach (var (matchDate, listOfMatchesOnDate) in matchesByDate)
+                foreach (var match in listOfMatchesOnDate)
+                {
+                    match.date = Convert.ToDateTime(matchDate);
+                    if (match.radiant.Union(match.dire).All(player => player.steam_id != null)) matches.Add(match);
+                }
+
+                Console.WriteLine("OK.");
+
+                return matches.OrderBy(x => x.match_id);
+            }
         }
 
         private static double Validate(double? value, double min = 0, double max = double.PositiveInfinity)
