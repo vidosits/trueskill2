@@ -12,14 +12,17 @@
 
   <ItemGroup>
     <Compile Remove="assemblies\**" />
+    <Compile Remove="generated_source\**" />
   </ItemGroup>
 
   <ItemGroup>
     <EmbeddedResource Remove="assemblies\**" />
+    <EmbeddedResource Remove="generated_source\**" />
   </ItemGroup>
 
   <ItemGroup>
     <None Remove="assemblies\**" />
+    <None Remove="generated_source\**" />
   </ItemGroup>
 
   <ItemGroup>
