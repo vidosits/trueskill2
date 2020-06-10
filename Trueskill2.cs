@@ -50,17 +50,22 @@ namespace ts.core
             #region Parameters
 
             // parameter variables
-            var skillPrior = Gaussian.FromMeanAndVariance(1500, 500 * 500); // N ~ (μ, σ)
+            var skillPriorsForTiers = new []
+            {
+                Gaussian.FromMeanAndVariance(1500, 500 * 500),
+                Gaussian.FromMeanAndVariance(1200, 400 * 400),
+                Gaussian.FromMeanAndVariance(1000, 300 * 300)
+            }; // N ~ (μ, σ)
 
-            var skillClassWidthPrior = Variable.Observed(Gamma.FromMeanAndVariance(250, 100 * 100));
+            var skillClassWidthPrior = Variable.Observed(Gamma.FromMeanAndVariance(250*250, 1));
             var skillClassWidth = Variable<double>.Random(skillClassWidthPrior).Named("skillClassWidth"); // β  
             skillClassWidth.AddAttribute(new PointEstimate());
 
-            var skillDynamicsPrior = Variable.Observed(Gamma.FromMeanAndVariance(10, 10 * 10));
+            var skillDynamicsPrior = Variable.Observed(Gamma.FromMeanAndVariance(10*10, 1));
             var skillDynamics = Variable<double>.Random(skillDynamicsPrior).Named("skillDynamics"); // γ
             skillDynamics.AddAttribute(new PointEstimate());
 
-            var skillSharpnessDecreasePrior = Variable.Observed(Gamma.FromMeanAndVariance(1, 10 * 10));
+            var skillSharpnessDecreasePrior = Variable.Observed(Gamma.FromMeanAndVariance(10*10, 1));
             var skillSharpnessDecrease = Variable<double>.Random(skillSharpnessDecreasePrior).Named("skillSharpnessDecrease"); // τ
             skillSharpnessDecrease.AddAttribute(new PointEstimate());
 
@@ -69,10 +74,11 @@ namespace ts.core
 
             var gaussianStatParamsPriors = Variable.Array(Variable.Array(Variable.Array<Gaussian>(nParamsPerStat), nStats), nHeroes);
             var gaussianStatParams = Variable.Array(Variable.Array(Variable.Array<double>(nParamsPerStat), nStats), nHeroes);
-
+            gaussianStatParams.AddAttribute(new PointEstimate());
 
             var gammaStatParamsPriors = Variable.Array(Variable.Array<Gamma>(nStats), nHeroes);
             var gammaStatParams = Variable.Array(Variable.Array<double>(nStats), nHeroes);
+            gammaStatParams.AddAttribute(new PointEstimate());
 
 
             using (Variable.ForEach(nHeroes))
@@ -110,12 +116,12 @@ namespace ts.core
                         }
 
                         gaussianStatParams[nHeroes][statBlock.Index][paramBlock.Index] = Variable<double>.Random(gaussianStatParamsPriors[nHeroes][statBlock.Index][paramBlock.Index]);
-                        gaussianStatParams[nHeroes][statBlock.Index][paramBlock.Index].AddAttribute(new PointEstimate());
+                        // gaussianStatParams[nHeroes][statBlock.Index][paramBlock.Index].AddAttribute(new PointEstimate());
                     }
 
                     gammaStatParamsPriors[nHeroes][statBlock.Index] = Variable.Observed(Gamma.FromMeanAndVariance(1, 10 * 10));
                     gammaStatParams[nHeroes][statBlock.Index] = Variable<double>.Random(gammaStatParamsPriors[nHeroes][statBlock.Index]);
-                    gammaStatParams[nHeroes][statBlock.Index].AddAttribute(new PointEstimate());
+                    // gammaStatParams[nHeroes][statBlock.Index].AddAttribute(new PointEstimate());
                 }
             }
 
@@ -127,13 +133,13 @@ namespace ts.core
 
             // Array to hold the player lookup table. Let's us know which players played in which match
             var matches = Variable.Array(Variable.Array(Variable.Array<int>(nPlayersPerTeam), nTeamsPerMatch), nMatches).Named("matches");
-            
+
             // Array to hold the hero lookup table. Let's us know which hero was played by each player in each match
             var heroesPlayed = Variable.Array(Variable.Array(Variable.Array<int>(nPlayersPerTeam), nTeamsPerMatch), nMatches).Named("heroesPlayed");
-            
+
             // Array that let's us know whether hero information is available or not
             var isHeroMissing = Variable.Array(Variable.Array(Variable.Array<bool>(nPlayersPerTeam), nTeamsPerMatch), nMatches).Named("isHeroMissing");
-            
+
             #endregion
 
             #region Skill setup
@@ -259,7 +265,7 @@ namespace ts.core
                                             gaussianStatParams[heroId][nStats][0] * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] +
                                             gaussianStatParams[heroId][nStats][1] * (teamPerformance[opponentTeamIndex] / teamSize) * matchLengths[nMatches], gammaStatParams[heroId][nStats] * matchLengths[nMatches]));
                                 }
-                            }                            
+                            }
                         }
                     }
                 }
@@ -268,13 +274,16 @@ namespace ts.core
             // Run inference
             var inferenceEngine = new InferenceEngine
             {
-                ShowFactorGraph = false, Algorithm = new ExpectationPropagation(), NumberOfIterations = 100, ModelName = "TrueSkill2",
+                ShowFactorGraph = false,
+                Algorithm = new ExpectationPropagation(),
+                NumberOfIterations = 10,
+                ModelName = "TrueSkill2",
                 Compiler =
                 {
                     IncludeDebugInformation = true,
                     GenerateInMemory = false,
                     WriteSourceFiles = true,
-                    UseParallelForLoops = false,
+                    UseParallelForLoops = true,
                     ShowWarnings = false,
                     GeneratedSourceFolder = "/mnt/win/Andris/Work/WIN/trueskill/ts.core/generated_source"
                 },
@@ -303,7 +312,7 @@ namespace ts.core
 
                 // holds the indices of each player in each match w.r.t. the priors array
                 var batchMatches = new int[batchSize][][];
-                
+
                 // hold the hero ids played by each player in each match
                 var batchHeroesPlayed = new int[batchSize][][];
 
@@ -338,7 +347,7 @@ namespace ts.core
                         // if this is the first time that we've ever seen this player, initialize his/her global skill with the prior
                         if (!playerSkill.ContainsKey(player))
                         {
-                            playerSkill[player] = skillPrior;
+                            playerSkill[player] = skillPriorsForTiers[match.Tier - 1];
                             globalPlayerLastPlayed[player] = match.Date;
                         }
 
@@ -378,6 +387,7 @@ namespace ts.core
                             {
                                 Console.WriteLine("what");
                             }
+
                             batchPlayerTimeLapse[pIndex].Add((match.Date - globalPlayerLastPlayed[player]).Days);
                         }
 
@@ -398,18 +408,18 @@ namespace ts.core
 
                     var statsPerTeam = new double[2][][];
                     var statsMissing = new bool [2][][];
-                    
+
                     var heroesPerTeam = new int[2][];
                     var heroesPerTeamMissing = new bool[2][];
-                    
+
                     for (var teamIndex = 0; teamIndex < 2; ++teamIndex)
                     {
                         var playerStats = new double[5][];
                         var playerStatsMissing = new bool[5][];
-                        
+
                         var heroesPerPlayer = new int[5];
                         var heroesPerPlayerMissing = new bool[5];
-                        
+
                         for (var playerIndex = 0; playerIndex < 5; ++playerIndex)
                         {
                             if (match.PlayerStats?[teams[teamIndex][playerIndex]].HeroId != null)
@@ -464,7 +474,7 @@ namespace ts.core
                             {
                                 playerStats[playerIndex] = new double[numberOfStats];
                                 playerStatsMissing[playerIndex] = Enumerable.Repeat(true, numberOfStats).ToArray();
-                                
+
                                 heroesPerPlayer[playerIndex] = 0;
                                 heroesPerPlayerMissing[playerIndex] = true;
                             }
@@ -472,7 +482,7 @@ namespace ts.core
 
                         statsPerTeam[teamIndex] = playerStats;
                         statsMissing[teamIndex] = playerStatsMissing;
-                        
+
                         heroesPerTeam[teamIndex] = heroesPerPlayer;
                         heroesPerTeamMissing[teamIndex] = heroesPerPlayerMissing;
                     }
@@ -483,9 +493,9 @@ namespace ts.core
                     batchHeroesPlayed[matchIndex] = heroesPerTeam;
                     batchIsHeroMissing[matchIndex] = heroesPerTeamMissing;
                 }
-                
+
                 Console.WriteLine("Batch is ready to be processed.");
-                
+
                 // process this batch with TS2
 
                 #region Constants
@@ -502,6 +512,7 @@ namespace ts.core
 
                 heroesPlayed.ObservedValue = batchHeroesPlayed;
                 isHeroMissing.ObservedValue = batchIsHeroMissing;
+
                 #endregion
 
                 #region Matches
@@ -526,9 +537,20 @@ namespace ts.core
                 #endregion
 
                 var inferredSkills = inferenceEngine.Infer<Gaussian[][]>(skills);
+                var coeffs = inferenceEngine.Infer<Gaussian[][][]>(gaussianStatParams);
+
+                using (var file = File.CreateText($"/mnt/win/Andris/Work/WIN/trueskill/tests/abios_dota2_stat_coeffs.json"))
+                {
+                    new JsonSerializer().Serialize(file, coeffs);
+                }
 
                 // update the priors for the players in this batch
                 foreach (var (i, skillOverTime) in inferredSkills.Enumerate()) playerSkill[batchIndexToAbiosId[i]] = skillOverTime.Last();
+
+                using (var file = File.CreateText($"/mnt/win/Andris/Work/WIN/trueskill/tests/abios_dota2_ratings.json"))
+                {
+                    new JsonSerializer().Serialize(file, playerSkill);
+                }
 
                 // update the parameters
                 var skillClassWidthPriorValue = inferenceEngine.Infer<Gamma>(skillClassWidth);
