@@ -5,6 +5,7 @@ using Microsoft.ML.Probabilistic.Math;
 using Microsoft.ML.Probabilistic.Models;
 using Microsoft.ML.Probabilistic.Models.Attributes;
 using Microsoft.ML.Probabilistic.Utilities;
+using Range = Microsoft.ML.Probabilistic.Models.Range;
 
 namespace ts.core
 {

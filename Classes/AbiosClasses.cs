@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
 
-namespace ts.core
+namespace ts.core.Classes
 {
-    public class PlayerStat
+    public class DotaPlayerStat
     {
         public int? HeroId { get; set; }
         public double? Kills { get; set; }
@@ -23,8 +23,32 @@ namespace ts.core
         public double? SentriesPlaced { get; set; }
         public double? CampsStacked { get; set; }
     }
-
-    public class Match
+    
+    public class LeaguePlayerStat
+    {
+        public int? ChampionId { get; set; }
+        public string ChampionName { get; set; }
+        
+        public double? Kills { get; set; }
+        public double? Deaths { get; set; }
+        public double? Assists { get; set; }
+        
+        public double? Level { get; set; }
+        public double? GoldEarned { get; set; }
+        public double? CreepScore { get; set; }
+        
+        public double? DamageDealtToHeroes { get; set; }
+        public double? DamageDealtToObjectives { get; set; }
+        public double? DamageDealtToTurrets { get; set; }
+        
+        public double? HealingDone { get; set; }
+        public double? CrowdControlTime { get; set; }
+        public double? WardsPlaced { get; set; }
+        public double? WardsDestroyed { get; set; }
+        
+    }
+    
+    public class Match<T>
     {
         public int Id { get; set; }
         public DateTime Date {get; set;}
@@ -34,6 +58,6 @@ namespace ts.core
         public int Winner { get; set; }
         public int Tier { get; set; }
         public int MatchLength { get; set; }
-        public Dictionary<int, PlayerStat> PlayerStats { get; set; }
+        public Dictionary<int, T> PlayerStats { get; set; }
     }
 }

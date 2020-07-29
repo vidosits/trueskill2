@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using Microsoft.ML.Probabilistic.Distributions;
 using Microsoft.ML.Probabilistic.Models;
+using Range = Microsoft.ML.Probabilistic.Models.Range;
 
 namespace ts.core
 {

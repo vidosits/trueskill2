@@ -3,6 +3,7 @@ using System.Linq;
 using Microsoft.ML.Probabilistic.Algorithms;
 using Microsoft.ML.Probabilistic.Distributions;
 using Microsoft.ML.Probabilistic.Models;
+using Range = Microsoft.ML.Probabilistic.Models.Range;
 
 namespace ts.core
 {
@@ -13,7 +14,7 @@ namespace ts.core
         private const double SkillClassWidth = SkillDeviation / 2; // β
         private const double SkillDynamicsFactor = SkillDeviation / 100; // τ or γ
 
-        private const double DrawProbability = 0.1;
+        private const double DrawProbability = 0.0;
 
         internal static void RunExample(int[] winnerData, int[] loserData)
         {
@@ -23,8 +24,12 @@ namespace ts.core
             // Define the statistical model as a probabilistic program
             var game = new Range(winnerData.Length).Named("Game");
             var player = new Range(winnerData.Concat(loserData).Max() + 1).Named("Player");
-            var playerSkills = Variable.Array<double>(player).Named("PlayerSkills");
-            playerSkills[player] = Variable.GaussianFromMeanAndVariance(SkillMean, Math.Pow(SkillDeviation, 2) + Math.Pow(SkillDynamicsFactor, 2)).ForEach(player).Named("PlayerSkill");
+
+            var playerSkillPriors = Variable.Array<Gaussian>(player).Named("PlayerSkillPriors");
+            playerSkillPriors[player] = Gaussian.FromMeanAndVariance(SkillMean, Math.Pow(SkillDeviation, 2) + Math.Pow(SkillDynamicsFactor, 2));
+            var playerSkills = Variable.Array<double>(player).Named("PlayerSkillPriors");
+            playerSkills[player] = Variable<double>.Random(playerSkillPriors[player]);
+            
 
             var winners = Variable.Array<int>(game).Named("Winners");
             var losers = Variable.Array<int>(game).Named("Losers");
@@ -49,18 +54,14 @@ namespace ts.core
 
             // The inferred skills are uncertain, which is captured in their variance
             var orderedPlayerSkills = inferredSkills.Select((s, i) => new {Player = i, Skill = s}).OrderByDescending(ps => ps.Skill.GetMean());
-
-            var updatedPlayerSkillPriors = Variable.Array<double>(player);
+            
             foreach (var playerSkill in orderedPlayerSkills)
             {
-                Console.WriteLine($"Player {playerSkill.Player} skill mean: {playerSkill.Skill.GetMean():F5}, variance: {playerSkill.Skill.GetVariance():F5}");
+                Console.WriteLine($"Player {playerSkill.Player} skill mean: {playerSkill.Skill.GetMean():F3}, deviation: {Math.Sqrt(playerSkill.Skill.GetVariance()):F3}");
                 
                 // update player skill priors with an additive dynamics factor
-                updatedPlayerSkillPriors[playerSkill.Player] = Variable.GaussianFromMeanAndVariance(playerSkill.Skill.GetMean(), playerSkill.Skill.GetVariance() + Math.Pow(SkillDynamicsFactor, 2));
+                playerSkillPriors[playerSkill.Player].ObservedValue = Gaussian.FromMeanAndVariance(playerSkill.Skill.GetMean(), playerSkill.Skill.GetVariance() + Math.Pow(SkillDynamicsFactor, 2));
             }
-
-            playerSkills = updatedPlayerSkillPriors;
-
         }
     }
 }
