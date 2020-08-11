@@ -27,8 +27,6 @@ namespace ts.core.TrueSkill2
 
             #region Constants
 
-            var zero = Variable.Observed(0.0).Named("zero");
-            var teamSize = Variable.Observed(5.0).Named("teamSize");
             var batchLength = Variable.New<int>();
             var numOfPlayers = Variable.New<int>();
 
@@ -38,7 +36,6 @@ namespace ts.core.TrueSkill2
 
             var nPlayers = new Range(numOfPlayers).Named("nPlayers");
             var nMatches = new Range(batchLength).Named("nMatches");
-            // nMatches.AddAttribute(new Sequential());
 
             var nPlayersPerTeam = new Range(5).Named("nPlayersPerTeam");
             var nTeamsPerMatch = new Range(2).Named("nTeamsPerMatch");
@@ -50,20 +47,18 @@ namespace ts.core.TrueSkill2
 
             #region Parameters
 
-            // parameter variables
-            // var skillPrior = Gaussian.FromMeanAndVariance(1500, 250 * 250); // N ~ (μ, σ)
             const double skillMean = 1500.0; // μ
             const double skillDeviation = 250; // σ
 
-            var skillClassWidthPrior = Variable.Observed(Gamma.FromMeanAndVariance(150 * 150, 1));
-            var skillClassWidth = Variable<double>.Random(skillClassWidthPrior).Named("skillClassWidth"); // β  
+            var skillClassWidthPrior = Variable.Observed(Gamma.FromShapeAndRate(1, 250 * 250));
+            var skillClassWidth = Variable<double>.Random(skillClassWidthPrior).Named("skillClassWidth"); // β
             skillClassWidth.AddAttribute(new PointEstimate());
 
-            var skillDynamicsPrior = Variable.Observed(Gamma.FromMeanAndVariance(25 * 25, 1));
+            var skillDynamicsPrior = Variable.Observed(Gamma.FromShapeAndRate(2, 25 * 25));
             var skillDynamics = Variable<double>.Random(skillDynamicsPrior).Named("skillDynamics"); // γ
             skillDynamics.AddAttribute(new PointEstimate());
 
-            var skillSharpnessDecreasePrior = Variable.Observed(Gamma.FromMeanAndVariance(10 * 10, 1));
+            var skillSharpnessDecreasePrior = Variable.Observed(Gamma.FromShapeAndRate(2, 10 * 10));
             var skillSharpnessDecrease = Variable<double>.Random(skillSharpnessDecreasePrior).Named("skillSharpnessDecrease"); // τ
             skillSharpnessDecrease.AddAttribute(new PointEstimate());
 
@@ -72,54 +67,54 @@ namespace ts.core.TrueSkill2
 
             var gaussianStatParamsPriors = Variable.Array(Variable.Array(Variable.Array<Gaussian>(nParamsPerStat), nStats), nHeroes);
             var gaussianStatParams = Variable.Array(Variable.Array(Variable.Array<double>(nParamsPerStat), nStats), nHeroes);
-
-            using (Variable.ForEach(nHeroes))
-            {
-                using (var statBlock = Variable.ForEach(nStats))
-                {
-                    using (var paramBlock = Variable.ForEach(nParamsPerStat))
-                    {
-                        // If stat positively correlates with performance, e.g.: Kills, Assists, Level
-                        using (Variable.If(statBlock.Index != 1))
-                        {
-                            using (Variable.Case(paramBlock.Index, 0))
-                            {
-                                gaussianStatParamsPriors[nHeroes][statBlock.Index][paramBlock.Index] = Variable.Observed(Gaussian.FromMeanAndVariance(1, 4));
-                            }
-
-                            using (Variable.Case(paramBlock.Index, 1))
-                            {
-                                gaussianStatParamsPriors[nHeroes][statBlock.Index][paramBlock.Index] = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 4));
-                            }
-                        }
-
-                        // If stat negatively correlates with performance, e.g.: Deaths
-                        using (Variable.If(statBlock.Index == 1))
-                        {
-                            using (Variable.Case(paramBlock.Index, 0))
-                            {
-                                gaussianStatParamsPriors[nHeroes][statBlock.Index][paramBlock.Index] = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 4));
-                            }
-
-                            using (Variable.Case(paramBlock.Index, 1))
-                            {
-                                gaussianStatParamsPriors[nHeroes][statBlock.Index][paramBlock.Index] = Variable.Observed(Gaussian.FromMeanAndVariance(1, 4));
-                            }
-                        }
-
-                        gaussianStatParams[nHeroes][statBlock.Index][paramBlock.Index] = Variable<double>.Random(gaussianStatParamsPriors[nHeroes][statBlock.Index][paramBlock.Index]);
-                    }
-                }
-            }
-
-            gaussianStatParams.AddAttribute(new PointEstimate());
-
+            
             var gammaStatParamsPriors = Variable.Array(Variable.Array<Gamma>(nStats), nHeroes);
             var gammaStatParams = Variable.Array(Variable.Array<double>(nStats), nHeroes);
 
-            gammaStatParamsPriors[nHeroes][nStats].SetTo(Variable.Observed(Gamma.FromMeanAndVariance(1, 10 * 10)));
-            gammaStatParams[nHeroes][nStats].SetTo(Variable<double>.Random(gammaStatParamsPriors[nHeroes][nStats]));
-            gammaStatParams.AddAttribute(new PointEstimate());
+            // using (Variable.ForEach(nHeroes))
+            // {
+            //     using (var statBlock = Variable.ForEach(nStats))
+            //     {
+            //         using (var paramBlock = Variable.ForEach(nParamsPerStat))
+            //         {
+            //             // If stat positively correlates with performance, e.g.: Kills, Assists, Level
+            //             using (Variable.If(statBlock.Index != 1))
+            //             {
+            //                 using (Variable.Case(paramBlock.Index, 0))
+            //                 {
+            //                     gaussianStatParamsPriors[nHeroes][statBlock.Index][paramBlock.Index] = Variable.Observed(Gaussian.FromMeanAndVariance(1, 4));
+            //                 }
+            //
+            //                 using (Variable.Case(paramBlock.Index, 1))
+            //                 {
+            //                     gaussianStatParamsPriors[nHeroes][statBlock.Index][paramBlock.Index] = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 4));
+            //                 }
+            //             }
+            //
+            //             // If stat negatively correlates with performance, e.g.: Deaths
+            //             using (Variable.If(statBlock.Index == 1))
+            //             {
+            //                 using (Variable.Case(paramBlock.Index, 0))
+            //                 {
+            //                     gaussianStatParamsPriors[nHeroes][statBlock.Index][paramBlock.Index] = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 4));
+            //                 }
+            //
+            //                 using (Variable.Case(paramBlock.Index, 1))
+            //                 {
+            //                     gaussianStatParamsPriors[nHeroes][statBlock.Index][paramBlock.Index] = Variable.Observed(Gaussian.FromMeanAndVariance(1, 4));
+            //                 }
+            //             }
+            //
+            //             gaussianStatParams[nHeroes][statBlock.Index][paramBlock.Index] = Variable<double>.Random(gaussianStatParamsPriors[nHeroes][statBlock.Index][paramBlock.Index]);
+            //         }
+            //     }
+            // }
+            //
+            // gaussianStatParams.AddAttribute(new PointEstimate());
+            //
+            // gammaStatParamsPriors[nHeroes][nStats].SetTo(Variable.Observed(Gamma.FromMeanAndVariance(1, 10 * 10)));
+            // gammaStatParams[nHeroes][nStats].SetTo(Variable<double>.Random(gammaStatParamsPriors[nHeroes][nStats]));
+            // gammaStatParams.AddAttribute(new PointEstimate());
 
             #endregion
 
@@ -201,12 +196,15 @@ namespace ts.core.TrueSkill2
                 {
                     using (Variable.If(matchBlock.Index == 0))
                     {
-                        skills[playerBlock.Index][matchBlock.Index].SetTo(Variable<double>.Random(skillPriors[playerBlock.Index]).Named($"{playerBlock.Index}. player prior"));
+                        skills[playerBlock.Index][matchBlock.Index] = Variable<double>.Random(skillPriors[playerBlock.Index]);
                     }
 
                     using (Variable.If(matchBlock.Index > 0))
                     {
-                        skills[playerBlock.Index][matchBlock.Index].SetTo(Variable.GaussianFromMeanAndVariance(Variable.GaussianFromMeanAndVariance(skills[playerBlock.Index][matchBlock.Index - 1], skillSharpnessDecrease * playerTimeLapse[playerBlock.Index][matchBlock.Index]), skillDynamics));
+                        skills[playerBlock.Index][matchBlock.Index] = Variable.GaussianFromMeanAndPrecision(
+                            Variable.GaussianFromMeanAndPrecision(skills[playerBlock.Index][matchBlock.Index - 1],
+                                skillSharpnessDecrease / playerTimeLapse[playerBlock.Index][matchBlock.Index]),
+                            skillDynamics);
                     }
                 }
             }
@@ -222,7 +220,9 @@ namespace ts.core.TrueSkill2
                     {
                         var playerIndex = matches[nMatches][nTeamsPerMatch][nPlayersPerTeam].Named("playerIndex");
                         var matchIndex = playerMatchMapping[playerIndex][nMatches];
-                        playerPerformance[nTeamsPerMatch][nPlayersPerTeam] = Variable.GaussianFromMeanAndVariance(skills[playerIndex][matchIndex], skillClassWidth).Named("playerPerformanceInNthMatchInIthTeam");
+                        
+                        var dampedSkill = Variable<double>.Factor(Damp.Backward, skills[playerIndex][matchIndex], 0.1);
+                        playerPerformance[nTeamsPerMatch][nPlayersPerTeam] = Variable.GaussianFromMeanAndPrecision(dampedSkill, skillClassWidth);
                     }
 
                     teamPerformance[nTeamsPerMatch] = Variable.Sum(playerPerformance[nTeamsPerMatch]);
@@ -230,36 +230,36 @@ namespace ts.core.TrueSkill2
 
                 Variable.ConstrainTrue(teamPerformance[0] > teamPerformance[1]);
 
-                using (var team = Variable.ForEach(nTeamsPerMatch))
-                {
-                    using (Variable.ForEach(nPlayersPerTeam))
-                    {
-                        var opponentTeamIndex = Variable.New<int>();
-                        using (Variable.Case(team.Index, 0))
-                        {
-                            opponentTeamIndex.ObservedValue = 1;
-                        }
-
-                        using (Variable.Case(team.Index, 1))
-                        {
-                            opponentTeamIndex.ObservedValue = 0;
-                        }
-
-                        using (Variable.IfNot(isHeroMissing[nMatches][nTeamsPerMatch][nPlayersPerTeam]))
-                        {
-                            var heroId = heroesPlayed[nMatches][nTeamsPerMatch][nPlayersPerTeam];
-                            using (Variable.ForEach(nStats))
-                            {
-                                using (Variable.IfNot(isStatMissing[nMatches][nTeamsPerMatch][nPlayersPerTeam][nStats]))
-                                {
-                                    stats[nMatches][nTeamsPerMatch][nPlayersPerTeam][nStats].SetTo(Variable.Max(zero,
-                                        Variable.GaussianFromMeanAndVariance(gaussianStatParams[heroId][nStats][0] * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] + gaussianStatParams[heroId][nStats][1] * (teamPerformance[opponentTeamIndex] / teamSize) * matchLengths[nMatches],
-                                            gammaStatParams[heroId][nStats] * matchLengths[nMatches])));
-                                }
-                            }
-                        }
-                    }
-                }
+                // using (var team = Variable.ForEach(nTeamsPerMatch))
+                // {
+                //     using (Variable.ForEach(nPlayersPerTeam))
+                //     {
+                //         var opponentTeamIndex = Variable.New<int>();
+                //         using (Variable.Case(team.Index, 0))
+                //         {
+                //             opponentTeamIndex.ObservedValue = 1;
+                //         }
+                //
+                //         using (Variable.Case(team.Index, 1))
+                //         {
+                //             opponentTeamIndex.ObservedValue = 0;
+                //         }
+                //
+                //         using (Variable.IfNot(isHeroMissing[nMatches][nTeamsPerMatch][nPlayersPerTeam]))
+                //         {
+                //             var heroId = heroesPlayed[nMatches][nTeamsPerMatch][nPlayersPerTeam];
+                //             using (Variable.ForEach(nStats))
+                //             {
+                //                 using (Variable.IfNot(isStatMissing[nMatches][nTeamsPerMatch][nPlayersPerTeam][nStats]))
+                //                 {
+                //                     stats[nMatches][nTeamsPerMatch][nPlayersPerTeam][nStats].SetTo(Variable.Max(0,
+                //                         Variable.GaussianFromMeanAndPrecision(gaussianStatParams[heroId][nStats][0] * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] + gaussianStatParams[heroId][nStats][1] * (teamPerformance[opponentTeamIndex] / 5) * matchLengths[nMatches],
+                //                             gammaStatParams[heroId][nStats] / matchLengths[nMatches])));
+                //                 }
+                //             }
+                //         }
+                //     }
+                // }
             }
 
             // Run inference
@@ -267,7 +267,7 @@ namespace ts.core.TrueSkill2
             {
                 ShowFactorGraph = false,
                 Algorithm = new ExpectationPropagation(),
-                NumberOfIterations = 10,
+                NumberOfIterations = 1000,
                 ModelName = "TrueSkill2",
                 Compiler =
                 {
@@ -279,17 +279,17 @@ namespace ts.core.TrueSkill2
                     GeneratedSourceFolder = "/mnt/win/Andris/Work/WIN/trueskill/ts.core/generated_source"
                 },
             };
-            inferenceEngine.Compiler.GivePriorityTo(typeof(GaussianFromMeanAndVarianceOp_PointVariance));
+            // inferenceEngine.Compiler.GivePriorityTo(typeof(GaussianFromMeanAndVarianceOp_PointVariance));
             // inferenceEngine.Compiler.GivePriorityTo(typeof(GaussianProductOp_PointB));
             // inferenceEngine.Compiler.GivePriorityTo(typeof(GaussianProductOp_SHG09));
 
             #region Inference
 
-            var rawMatches = Utils.ReadMatchesFromFile<Match<LeaguePlayerStat>>("/mnt/win/Andris/Work/WIN/trueskill/ts.core/Data/abios_lol_matches_with_stats_and_converted_champion_ids.json").OrderBy(x => x.Date);
+            var rawMatches = Utils.ReadMatchesFromFile<Match<LeaguePlayerStat>>("/mnt/win/Andris/Work/WIN/trueskill/ts.core/Data/abios_lol_matches_with_stats_and_converted_champion_ids.json").OrderBy(x => x.Date).ThenBy(x => x.Id);
             Console.WriteLine("OK.");
-            const int batchSize = 25242; // total dota2 matches: 36119, total lol matches: 25241
+            var batchSize = 25243; // total dota2 matches: 36119, total lol matches: 25243
 
-            // dictionary keeping track of player skills
+            // global (w.r.t. the batches) dictionary that keeps track of player skills
             var playerSkill = new Dictionary<int, Gaussian>();
 
             // dictionary keeping tack of the last time a player has played
@@ -297,6 +297,7 @@ namespace ts.core.TrueSkill2
 
             foreach (var batch in rawMatches.Batch(batchSize))
             {
+                if (batch.Count() < batchSize) batchSize = batch.Count(); 
                 var abiosIdToBatchIndex = new Dictionary<int, int>();
                 var batchIndexToAbiosId = new Dictionary<int, int>();
 
@@ -341,6 +342,7 @@ namespace ts.core.TrueSkill2
                         if (!playerSkill.ContainsKey(player))
                         {
                             playerSkill[player] = Gaussian.FromMeanAndVariance(skillMean - 2 * (match.Tier - 1) * skillDeviation, Math.Pow(skillDeviation, 2));
+                            // playerSkill[player] = Gaussian.FromMeanAndVariance(skillMean, Math.Pow(skillDeviation, 2));
                             globalPlayerLastPlayed[player] = match.Date;
                         }
 
@@ -422,15 +424,15 @@ namespace ts.core.TrueSkill2
                                     Validate(match.PlayerStats[teams[teamIndex][playerIndex]].Kills),
                                     Validate(match.PlayerStats[teams[teamIndex][playerIndex]].Deaths),
                                     Validate(match.PlayerStats[teams[teamIndex][playerIndex]].Assists),
-                                    
+
                                     Validate(match.PlayerStats[teams[teamIndex][playerIndex]].Level),
                                     Validate(match.PlayerStats[teams[teamIndex][playerIndex]].GoldEarned),
                                     Validate(match.PlayerStats[teams[teamIndex][playerIndex]].CreepScore),
-                                    
+
                                     Validate(match.PlayerStats[teams[teamIndex][playerIndex]].DamageDealtToHeroes),
                                     Validate(match.PlayerStats[teams[teamIndex][playerIndex]].DamageDealtToObjectives),
                                     Validate(match.PlayerStats[teams[teamIndex][playerIndex]].DamageDealtToTurrets),
-                                    
+
                                     Validate(match.PlayerStats[teams[teamIndex][playerIndex]].HealingDone),
                                     Validate(match.PlayerStats[teams[teamIndex][playerIndex]].CrowdControlTime),
                                     Validate(match.PlayerStats[teams[teamIndex][playerIndex]].WardsPlaced),
@@ -442,15 +444,15 @@ namespace ts.core.TrueSkill2
                                     IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].Kills),
                                     IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].Deaths),
                                     IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].Assists),
-                                    
+
                                     IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].Level),
                                     IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].GoldEarned),
                                     IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].CreepScore),
-                                    
+
                                     IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].DamageDealtToHeroes),
                                     IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].DamageDealtToObjectives),
                                     IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].DamageDealtToTurrets),
-                                    
+
                                     IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].HealingDone),
                                     IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].CrowdControlTime),
                                     IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].WardsPlaced),
@@ -514,7 +516,7 @@ namespace ts.core.TrueSkill2
 
                 #endregion
 
-                #region Skill setup
+                #region Skill Setup
 
                 numberOfMatchesPlayedPerPlayer.ObservedValue = batchPlayerMatchCount.ToArray();
                 skillPriors.ObservedValue = batchPriors.ToArray();
@@ -529,57 +531,45 @@ namespace ts.core.TrueSkill2
 
                 #endregion
 
+                // update the parameters
                 var inferredSkills = inferenceEngine.Infer<Gaussian[][]>(skills);
-                var coefficients = inferenceEngine.Infer<Gaussian[][][]>(gaussianStatParams);
-                
                 foreach (var (i, skillOverTime) in inferredSkills.Enumerate()) playerSkill[batchIndexToAbiosId[i]] = skillOverTime.Last();
                 
-                var orderings = new Func<KeyValuePair<int, Gaussian>, double>[]
-                {
-                    s => s.Value.GetMean() - (Reimplementation<LeaguePlayerStat>.SkillMean / Reimplementation<LeaguePlayerStat>.SkillDeviation) * Math.Sqrt(s.Value.GetVariance()),
-                    s => s.Value.GetMean(),
-                    s => s.Value.GetMean() - 3 * Math.Sqrt(s.Value.GetVariance())
-                };
-                
-                var players = JsonConvert.DeserializeObject<Dictionary<int, string>>(File.ReadAllText("/mnt/win/Andris/Work/WIN/trueskill/ts.core/Data/abios_lol_player_names.json"));
-                foreach (var ordering in orderings)
-                {
-                    Console.WriteLine();
-                    var i = 1;
-                    foreach (var (key, value) in playerSkill.OrderByDescending(ordering).Take(15))
-                    {
-                        Console.WriteLine($"{i}. {players[key]} ({key}) : {value.GetMean():F0}, {Math.Sqrt(value.GetVariance()):F}");
-                        i++;
-                    }
-                }
+                // var skillClassWidthPriorValue = inferenceEngine.Infer<Gamma>(skillClassWidth);
+                // var skillDynamicsPriorValue = inferenceEngine.Infer<Gamma>(skillDynamics);
+                // var skillSharpnessDecreasePriorValue = inferenceEngine.Infer<Gamma>(skillSharpnessDecrease);
+                // var gaussianStatParamPriorValues = inferenceEngine.Infer<Gaussian[][][]>(gaussianStatParams);
+                // var gammaStatParamPriorValues = inferenceEngine.Infer<Gamma[][]>(gammaStatParams);
 
-                foreach (var t in coefficients)
-                {
-                    foreach (var t1 in t)
-                    {
-                        foreach (var t2 in t1)
-                        {
-                            Console.Write($"{t2} ");
-                        }
-                        Console.WriteLine();
-                    }
-                }
-
-                // update the parameters
-                var skillClassWidthPriorValue = inferenceEngine.Infer<Gamma>(skillClassWidth);
-                var skillDynamicsPriorValue = inferenceEngine.Infer<Gamma>(skillDynamics);
-                var skillSharpnessDecreasePriorValue = inferenceEngine.Infer<Gamma>(skillSharpnessDecrease);
-                var gaussianStatParamPriorValues = inferenceEngine.Infer<Gaussian[][][]>(gaussianStatParams);
-                var gammaStatParamPriorValues = inferenceEngine.Infer<Gamma[][]>(gammaStatParams);
+                // skillClassWidthPrior.ObservedValue = skillClassWidthPriorValue;
+                // skillDynamicsPrior.ObservedValue = skillDynamicsPriorValue;
+                // skillSharpnessDecreasePrior.ObservedValue = skillSharpnessDecreasePriorValue;
+                // gaussianStatParamsPriors.ObservedValue = gaussianStatParamPriorValues;
+                // gammaStatParamsPriors.ObservedValue = gammaStatParamPriorValues;
                 
-                skillClassWidthPrior.ObservedValue = skillClassWidthPriorValue;
-                skillDynamicsPrior.ObservedValue = skillDynamicsPriorValue;
-                skillSharpnessDecreasePrior.ObservedValue = skillSharpnessDecreasePriorValue;
-                gaussianStatParamsPriors.ObservedValue = gaussianStatParamPriorValues;
-                gammaStatParamsPriors.ObservedValue = gammaStatParamPriorValues;
+                
             }
 
             #endregion
+            
+            var orderings = new Func<KeyValuePair<int, Gaussian>, double>[]
+            {
+                s => s.Value.GetMean() - (Reimplementation<LeaguePlayerStat>.SkillMean / Reimplementation<LeaguePlayerStat>.SkillDeviation) * Math.Sqrt(s.Value.GetVariance()),
+                s => s.Value.GetMean(),
+                s => s.Value.GetMean() - 3 * Math.Sqrt(s.Value.GetVariance())
+            };
+
+            var players = JsonConvert.DeserializeObject<Dictionary<int, string>>(File.ReadAllText("/mnt/win/Andris/Work/WIN/trueskill/ts.core/Data/abios_lol_player_names.json"));
+            foreach (var ordering in orderings)
+            {
+                Console.WriteLine();
+                var i = 1;
+                foreach (var (key, value) in playerSkill.OrderByDescending(ordering).Take(30))
+                {
+                    Console.WriteLine($"{i}. {players[key]} ({key}) : {value.GetMean():F0}, {Math.Sqrt(value.GetVariance()):F}");
+                    i++;
+                }
+            }
         }
 
 

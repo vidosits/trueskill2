@@ -2,14 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace ts.core
+namespace ts.core.Classes
 {
     public static class ExtensionMethods
     {
         public static IEnumerable<(int index, T item)> Enumerate<T>(this IEnumerable<T> self)       
             => self.Select((item, index) => (index, item));
 
-        public static IEnumerable<IEnumerable<T>> Batch<T>(
+        public static IEnumerable<T[]> Batch<T>(
             this IEnumerable<T> source, int size)
         {
             T[] bucket = null;
