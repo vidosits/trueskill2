@@ -23,6 +23,15 @@ namespace ts.core.Classes
         public double? SentriesPlaced { get; set; }
         public double? CampsStacked { get; set; }
     }
+
+    public class CsgoPlayerStat
+    {
+        public double? Kills { get; set; }
+        public double? Deaths { get; set; }
+        public double? Assists { get; set; }
+        public double? FlashAssists { get; set; }
+        public double? Adr { get; set; }
+    }
     
     public class LeaguePlayerStat
     {
