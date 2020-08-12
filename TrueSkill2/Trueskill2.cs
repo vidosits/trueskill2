@@ -50,7 +50,11 @@ namespace ts.core.TrueSkill2
             const double skillMean = 1500.0; // μ
             const double skillDeviation = 250; // σ
 
-            var skillClassWidthPrior = Variable.Observed(Gamma.FromShapeAndRate(1, 250 * 250));
+            //Tau was 5% of sigma, not 1% as usual
+            // Beta is 50% of sigma
+            
+            
+            var skillClassWidthPrior = Variable.Observed(Gamma.FromShapeAndRate(2, 250 * 250));
             var skillClassWidth = Variable<double>.Random(skillClassWidthPrior).Named("skillClassWidth"); // β
             skillClassWidth.AddAttribute(new PointEstimate());
 
@@ -62,12 +66,15 @@ namespace ts.core.TrueSkill2
             var skillSharpnessDecrease = Variable<double>.Random(skillSharpnessDecreasePrior).Named("skillSharpnessDecrease"); // τ
             skillSharpnessDecrease.AddAttribute(new PointEstimate());
 
+            var skillDecayPrior = Variable.Observed(Gaussian.FromMeanAndVariance(1, 10 * 10));
+            var skillDecay = Variable<double>.Random(skillDecayPrior).Named("skillDecay");
+            skillDecay.AddAttribute(new PointEstimate());
 
             #region Stats
 
             var gaussianStatParamsPriors = Variable.Array(Variable.Array(Variable.Array<Gaussian>(nParamsPerStat), nStats), nHeroes);
             var gaussianStatParams = Variable.Array(Variable.Array(Variable.Array<double>(nParamsPerStat), nStats), nHeroes);
-            
+
             var gammaStatParamsPriors = Variable.Array(Variable.Array<Gamma>(nStats), nHeroes);
             var gammaStatParams = Variable.Array(Variable.Array<double>(nStats), nHeroes);
 
@@ -126,10 +133,10 @@ namespace ts.core.TrueSkill2
             var matches = Variable.Array(Variable.Array(Variable.Array<int>(nPlayersPerTeam), nTeamsPerMatch), nMatches).Named("matches");
 
             // Array to hold the hero lookup table. Let's us know which hero was played by each player in each match
-            var heroesPlayed = Variable.Array(Variable.Array(Variable.Array<int>(nPlayersPerTeam), nTeamsPerMatch), nMatches).Named("heroesPlayed");
-
-            // Array that let's us know whether hero information is available or not
-            var isHeroMissing = Variable.Array(Variable.Array(Variable.Array<bool>(nPlayersPerTeam), nTeamsPerMatch), nMatches).Named("isHeroMissing");
+            // var heroesPlayed = Variable.Array(Variable.Array(Variable.Array<int>(nPlayersPerTeam), nTeamsPerMatch), nMatches).Named("heroesPlayed");
+            //
+            // // Array that let's us know whether hero information is available or not
+            // var isHeroMissing = Variable.Array(Variable.Array(Variable.Array<bool>(nPlayersPerTeam), nTeamsPerMatch), nMatches).Named("isHeroMissing");
 
             #endregion
 
@@ -159,13 +166,14 @@ namespace ts.core.TrueSkill2
             #region Stats
 
             // Initialize arrays holding player stat(s) (e.g.: kills, deaths, etc.) information and whether they are available
-            var stats = Variable.Array(Variable.Array(Variable.Array(Variable.Array<double>(nStats), nPlayersPerTeam), nTeamsPerMatch), nMatches).Named("stats");
-            var isStatMissing = Variable.Array(Variable.Array(Variable.Array(Variable.Array<bool>(nStats), nPlayersPerTeam), nTeamsPerMatch), nMatches).Named("isStatMissing");
+            // var stats = Variable.Array(Variable.Array(Variable.Array(Variable.Array<double>(nStats), nPlayersPerTeam), nTeamsPerMatch), nMatches).Named("stats");
+            // var isStatMissing = Variable.Array(Variable.Array(Variable.Array(Variable.Array<bool>(nStats), nPlayersPerTeam), nTeamsPerMatch), nMatches).Named("isStatMissing");
 
             #endregion
 
             #region Mapping
-
+            
+            
             // This array is used to hold the mapping between the index (m) of the m-th match in the batch
             // and the index of the same match for the n-th player in the skills array
             // This is needed because we keep track of player skills in a jagged array like the following:
@@ -202,7 +210,7 @@ namespace ts.core.TrueSkill2
                     using (Variable.If(matchBlock.Index > 0))
                     {
                         skills[playerBlock.Index][matchBlock.Index] = Variable.GaussianFromMeanAndPrecision(
-                            Variable.GaussianFromMeanAndPrecision(skills[playerBlock.Index][matchBlock.Index - 1],
+                            Variable.GaussianFromMeanAndPrecision(skills[playerBlock.Index][matchBlock.Index - 1] - skillDecay * playerTimeLapse[playerBlock.Index][matchBlock.Index],
                                 skillSharpnessDecrease / playerTimeLapse[playerBlock.Index][matchBlock.Index]),
                             skillDynamics);
                     }
@@ -220,7 +228,7 @@ namespace ts.core.TrueSkill2
                     {
                         var playerIndex = matches[nMatches][nTeamsPerMatch][nPlayersPerTeam].Named("playerIndex");
                         var matchIndex = playerMatchMapping[playerIndex][nMatches];
-                        
+
                         var dampedSkill = Variable<double>.Factor(Damp.Backward, skills[playerIndex][matchIndex], 0.1);
                         playerPerformance[nTeamsPerMatch][nPlayersPerTeam] = Variable.GaussianFromMeanAndPrecision(dampedSkill, skillClassWidth);
                     }
@@ -285,9 +293,16 @@ namespace ts.core.TrueSkill2
 
             #region Inference
 
-            var rawMatches = Utils.ReadMatchesFromFile<Match<LeaguePlayerStat>>("/mnt/win/Andris/Work/WIN/trueskill/ts.core/Data/abios_lol_matches_with_stats_and_converted_champion_ids.json").OrderBy(x => x.Date).ThenBy(x => x.Id);
+            // var rawMatches = Utils.ReadMatchesFromFile<Match<LeaguePlayerStat>>("/mnt/win/Andris/Work/WIN/trueskill/ts.core/Data/abios_lol_matches_with_stats_and_converted_champion_ids.json").OrderBy(x => x.Date).ThenBy(x => x.Id);
+            // var rawMatches = Utils.ReadMatchesFromFile<Match<CsgoPlayerStat>>("/mnt/win/Andris/Work/WIN/trueskill/ts.core/Data/abios_csgo_matches_with_stats.json").OrderBy(x => x.Date).ThenBy(x => x.Id);
+            var excluded = new[] {313184};
+            var rawMatches = Utils.ReadMatchesFromFile<Match<DotaPlayerStat>>("/mnt/win/Andris/Work/WIN/trueskill/ts.core/Data/abios_dota2_matches_with_stats.json").Where(x => !excluded.Contains(x.Id)).OrderBy(x => x.Date).ThenBy(x => x.Id);
+            
+            // var players = JsonConvert.DeserializeObject<Dictionary<int, string>>(File.ReadAllText("/mnt/win/Andris/Work/WIN/trueskill/ts.core/Data/abios_lol_player_names.json"));
+            // var players = JsonConvert.DeserializeObject<Dictionary<int, string>>(File.ReadAllText("/mnt/win/Andris/Work/WIN/trueskill/ts.core/Data/abios_csgo_player_names.json"));
+            var players = JsonConvert.DeserializeObject<Dictionary<int, string>>(File.ReadAllText("/mnt/win/Andris/Work/WIN/trueskill/ts.core/Data/abios_dota2_player_names.json"));
             Console.WriteLine("OK.");
-            var batchSize = 25243; // total dota2 matches: 36119, total lol matches: 25243
+            var batchSize = 38432; // total dota2 matches: 38432, total lol matches: 28636, total csgo matches: 56569
 
             // global (w.r.t. the batches) dictionary that keeps track of player skills
             var playerSkill = new Dictionary<int, Gaussian>();
@@ -297,7 +312,7 @@ namespace ts.core.TrueSkill2
 
             foreach (var batch in rawMatches.Batch(batchSize))
             {
-                if (batch.Count() < batchSize) batchSize = batch.Count(); 
+                if (batch.Count() < batchSize) batchSize = batch.Count();
                 var abiosIdToBatchIndex = new Dictionary<int, int>();
                 var batchIndexToAbiosId = new Dictionary<int, int>();
 
@@ -407,86 +422,86 @@ namespace ts.core.TrueSkill2
                     var heroesPerTeam = new int[2][];
                     var heroesPerTeamMissing = new bool[2][];
 
-                    for (var teamIndex = 0; teamIndex < 2; ++teamIndex)
-                    {
-                        var playerStats = new double[5][];
-                        var playerStatsMissing = new bool[5][];
-
-                        var heroesPerPlayer = new int[5];
-                        var heroesPerPlayerMissing = new bool[5];
-
-                        for (var playerIndex = 0; playerIndex < 5; ++playerIndex)
-                        {
-                            if (match.PlayerStats != null)
-                            {
-                                var statsForPlayer = new[]
-                                {
-                                    Validate(match.PlayerStats[teams[teamIndex][playerIndex]].Kills),
-                                    Validate(match.PlayerStats[teams[teamIndex][playerIndex]].Deaths),
-                                    Validate(match.PlayerStats[teams[teamIndex][playerIndex]].Assists),
-
-                                    Validate(match.PlayerStats[teams[teamIndex][playerIndex]].Level),
-                                    Validate(match.PlayerStats[teams[teamIndex][playerIndex]].GoldEarned),
-                                    Validate(match.PlayerStats[teams[teamIndex][playerIndex]].CreepScore),
-
-                                    Validate(match.PlayerStats[teams[teamIndex][playerIndex]].DamageDealtToHeroes),
-                                    Validate(match.PlayerStats[teams[teamIndex][playerIndex]].DamageDealtToObjectives),
-                                    Validate(match.PlayerStats[teams[teamIndex][playerIndex]].DamageDealtToTurrets),
-
-                                    Validate(match.PlayerStats[teams[teamIndex][playerIndex]].HealingDone),
-                                    Validate(match.PlayerStats[teams[teamIndex][playerIndex]].CrowdControlTime),
-                                    Validate(match.PlayerStats[teams[teamIndex][playerIndex]].WardsPlaced),
-                                    Validate(match.PlayerStats[teams[teamIndex][playerIndex]].WardsDestroyed)
-                                };
-
-                                var statsForPlayerMissing = new[]
-                                {
-                                    IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].Kills),
-                                    IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].Deaths),
-                                    IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].Assists),
-
-                                    IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].Level),
-                                    IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].GoldEarned),
-                                    IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].CreepScore),
-
-                                    IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].DamageDealtToHeroes),
-                                    IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].DamageDealtToObjectives),
-                                    IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].DamageDealtToTurrets),
-
-                                    IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].HealingDone),
-                                    IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].CrowdControlTime),
-                                    IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].WardsPlaced),
-                                    IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].WardsDestroyed)
-                                };
-
-                                playerStats[playerIndex] = statsForPlayer;
-                                playerStatsMissing[playerIndex] = statsForPlayerMissing;
-
-                                heroesPerPlayer[playerIndex] = match.PlayerStats[teams[teamIndex][playerIndex]].ChampionId.Value;
-                                heroesPerPlayerMissing[playerIndex] = false;
-                            }
-                            else
-                            {
-                                playerStats[playerIndex] = new double[numberOfStats];
-                                playerStatsMissing[playerIndex] = Enumerable.Repeat(true, numberOfStats).ToArray();
-
-                                heroesPerPlayer[playerIndex] = 0;
-                                heroesPerPlayerMissing[playerIndex] = true;
-                            }
-                        }
-
-                        statsPerTeam[teamIndex] = playerStats;
-                        statsMissing[teamIndex] = playerStatsMissing;
-
-                        heroesPerTeam[teamIndex] = heroesPerPlayer;
-                        heroesPerTeamMissing[teamIndex] = heroesPerPlayerMissing;
-                    }
-
-                    batchStats[matchIndex] = statsPerTeam;
-                    batchStatMissing[matchIndex] = statsMissing;
-
-                    batchHeroesPlayed[matchIndex] = heroesPerTeam;
-                    batchIsHeroMissing[matchIndex] = heroesPerTeamMissing;
+                    // for (var teamIndex = 0; teamIndex < 2; ++teamIndex)
+                    // {
+                    //     var playerStats = new double[5][];
+                    //     var playerStatsMissing = new bool[5][];
+                    //
+                    //     var heroesPerPlayer = new int[5];
+                    //     var heroesPerPlayerMissing = new bool[5];
+                    //
+                    //     for (var playerIndex = 0; playerIndex < 5; ++playerIndex)
+                    //     {
+                    //         if (match.PlayerStats != null)
+                    //         {
+                    //             var statsForPlayer = new[]
+                    //             {
+                    //                 Validate(match.PlayerStats[teams[teamIndex][playerIndex]].Kills),
+                    //                 Validate(match.PlayerStats[teams[teamIndex][playerIndex]].Deaths),
+                    //                 Validate(match.PlayerStats[teams[teamIndex][playerIndex]].Assists),
+                    //             
+                    //                 // Validate(match.PlayerStats[teams[teamIndex][playerIndex]].Level),
+                    //                 // Validate(match.PlayerStats[teams[teamIndex][playerIndex]].GoldEarned),
+                    //                 // Validate(match.PlayerStats[teams[teamIndex][playerIndex]].CreepScore),
+                    //                 //
+                    //                 // Validate(match.PlayerStats[teams[teamIndex][playerIndex]].DamageDealtToHeroes),
+                    //                 // Validate(match.PlayerStats[teams[teamIndex][playerIndex]].DamageDealtToObjectives),
+                    //                 // Validate(match.PlayerStats[teams[teamIndex][playerIndex]].DamageDealtToTurrets),
+                    //                 //
+                    //                 // Validate(match.PlayerStats[teams[teamIndex][playerIndex]].HealingDone),
+                    //                 // Validate(match.PlayerStats[teams[teamIndex][playerIndex]].CrowdControlTime),
+                    //                 // Validate(match.PlayerStats[teams[teamIndex][playerIndex]].WardsPlaced),
+                    //                 // Validate(match.PlayerStats[teams[teamIndex][playerIndex]].WardsDestroyed)
+                    //             };
+                    //             
+                    //             var statsForPlayerMissing = new[]
+                    //             {
+                    //                 IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].Kills),
+                    //                 IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].Deaths),
+                    //                 IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].Assists),
+                    //             
+                    //                 // IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].Level),
+                    //                 // IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].GoldEarned),
+                    //                 // IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].CreepScore),
+                    //                 //
+                    //                 // IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].DamageDealtToHeroes),
+                    //                 // IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].DamageDealtToObjectives),
+                    //                 // IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].DamageDealtToTurrets),
+                    //                 //
+                    //                 // IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].HealingDone),
+                    //                 // IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].CrowdControlTime),
+                    //                 // IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].WardsPlaced),
+                    //                 // IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].WardsDestroyed)
+                    //             };
+                    //
+                    //             playerStats[playerIndex] = statsForPlayer;
+                    //             playerStatsMissing[playerIndex] = statsForPlayerMissing;
+                    //
+                    //             // heroesPerPlayer[playerIndex] = match.PlayerStats[teams[teamIndex][playerIndex]].ChampionId.Value;
+                    //             heroesPerPlayerMissing[playerIndex] = false;
+                    //         }
+                    //         else
+                    //         {
+                    //             playerStats[playerIndex] = new double[numberOfStats];
+                    //             playerStatsMissing[playerIndex] = Enumerable.Repeat(true, numberOfStats).ToArray();
+                    //
+                    //             heroesPerPlayer[playerIndex] = 0;
+                    //             heroesPerPlayerMissing[playerIndex] = true;
+                    //         }
+                    //     }
+                    //
+                    //     statsPerTeam[teamIndex] = playerStats;
+                    //     statsMissing[teamIndex] = playerStatsMissing;
+                    //
+                    //     heroesPerTeam[teamIndex] = heroesPerPlayer;
+                    //     heroesPerTeamMissing[teamIndex] = heroesPerPlayerMissing;
+                    // }
+                    //
+                    // batchStats[matchIndex] = statsPerTeam;
+                    // batchStatMissing[matchIndex] = statsMissing;
+                    //
+                    // batchHeroesPlayed[matchIndex] = heroesPerTeam;
+                    // batchIsHeroMissing[matchIndex] = heroesPerTeamMissing;
                 }
 
                 Console.WriteLine("Batch is ready to be processed.");
@@ -502,11 +517,11 @@ namespace ts.core.TrueSkill2
 
                 #region Stats
 
-                stats.ObservedValue = batchStats;
-                isStatMissing.ObservedValue = batchStatMissing;
-
-                heroesPlayed.ObservedValue = batchHeroesPlayed;
-                isHeroMissing.ObservedValue = batchIsHeroMissing;
+                // stats.ObservedValue = batchStats;
+                // isStatMissing.ObservedValue = batchStatMissing;
+                //
+                // heroesPlayed.ObservedValue = batchHeroesPlayed;
+                // isHeroMissing.ObservedValue = batchIsHeroMissing;
 
                 #endregion
 
@@ -534,7 +549,7 @@ namespace ts.core.TrueSkill2
                 // update the parameters
                 var inferredSkills = inferenceEngine.Infer<Gaussian[][]>(skills);
                 foreach (var (i, skillOverTime) in inferredSkills.Enumerate()) playerSkill[batchIndexToAbiosId[i]] = skillOverTime.Last();
-                
+
                 // var skillClassWidthPriorValue = inferenceEngine.Infer<Gamma>(skillClassWidth);
                 // var skillDynamicsPriorValue = inferenceEngine.Infer<Gamma>(skillDynamics);
                 // var skillSharpnessDecreasePriorValue = inferenceEngine.Infer<Gamma>(skillSharpnessDecrease);
@@ -546,25 +561,23 @@ namespace ts.core.TrueSkill2
                 // skillSharpnessDecreasePrior.ObservedValue = skillSharpnessDecreasePriorValue;
                 // gaussianStatParamsPriors.ObservedValue = gaussianStatParamPriorValues;
                 // gammaStatParamsPriors.ObservedValue = gammaStatParamPriorValues;
-                
-                
             }
 
             #endregion
-            
+
             var orderings = new Func<KeyValuePair<int, Gaussian>, double>[]
             {
-                s => s.Value.GetMean() - (Reimplementation<LeaguePlayerStat>.SkillMean / Reimplementation<LeaguePlayerStat>.SkillDeviation) * Math.Sqrt(s.Value.GetVariance()),
+                s => s.Value.GetMean() - (skillMean / skillDeviation) * Math.Sqrt(s.Value.GetVariance()),
+                s => s.Value.GetMean() - 3 * Math.Sqrt(s.Value.GetVariance()),
+                s => s.Value.GetMean() - Math.Sqrt(s.Value.GetVariance()),
                 s => s.Value.GetMean(),
-                s => s.Value.GetMean() - 3 * Math.Sqrt(s.Value.GetVariance())
             };
-
-            var players = JsonConvert.DeserializeObject<Dictionary<int, string>>(File.ReadAllText("/mnt/win/Andris/Work/WIN/trueskill/ts.core/Data/abios_lol_player_names.json"));
+            
             foreach (var ordering in orderings)
             {
                 Console.WriteLine();
                 var i = 1;
-                foreach (var (key, value) in playerSkill.OrderByDescending(ordering).Take(30))
+                foreach (var (key, value) in playerSkill.OrderByDescending(ordering).Take(100))
                 {
                     Console.WriteLine($"{i}. {players[key]} ({key}) : {value.GetMean():F0}, {Math.Sqrt(value.GetVariance()):F}");
                     i++;
