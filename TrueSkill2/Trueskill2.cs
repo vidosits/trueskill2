@@ -22,7 +22,29 @@ namespace ts.core.TrueSkill2
             #region Parameters
 
             const int numberOfStats = 13;
+            const double skillMean = 1500.0; // μ
+            const double skillDeviation = 250; // σ
+            var skillClassWidthPrior = Variable.Observed(Gamma.FromShapeAndRate(2, 250 * 250)); // β
+            var skillDynamicsPrior = Variable.Observed(Gamma.FromShapeAndRate(2, 25 * 25)); // γ
+			var skillSharpnessDecreasePrior = Variable.Observed(Gamma.FromShapeAndRate(2, 10 * 10)); // τ
+			var skillDecayPrior = Variable.Observed(Gaussian.FromMeanAndVariance(1, 10 * 10)); // decay
+			var skillDamping = 0.1; // strength of the backward damping, the smaller it is the lower the rating inflation but the more iterations the algo needs to converge
+			var numberOfIterations = 100;
+			var batchSize = 38432; // total dota2 matches: 38432, total lol matches: 28636, total csgo matches: 56569
 
+			var gameName = "dota2"; // options: lol, csgo, dota2
+			var excludedMatchIds = new[] {313184}; // some matches from Abios have incorrect data, we need to exclude processing them here
+
+			/* you HAVE TO use the correct type for the selected game above:
+			dota2: DotaPlayerStat
+			lol: LeaguePlayerStat
+			csgo: CsgoPlayerStat
+			*/
+			var rawMatches = Utils.ReadMatchesFromFile<Match<DotaPlayerStat>>($"/home/ubuntu/ratings/Data/abios_{gameName}_matches_with_stats.json").Where(x => !excludedMatchIds.Contains(x.Id)).OrderBy(x => x.Date).ThenBy(x => x.Id);
+			var players = JsonConvert.DeserializeObject<Dictionary<int, string>>(File.ReadAllText($"/home/ubuntu/ratings/Data/abios_{gameName}_player_names.json"));
+            Console.WriteLine("OK.");
+
+            
             #endregion
 
             #region Constants
@@ -45,28 +67,16 @@ namespace ts.core.TrueSkill2
 
             #endregion
 
-            #region Parameters
-
-            const double skillMean = 1500.0; // μ
-            const double skillDeviation = 250; // σ
-
-            //Tau was 5% of sigma, not 1% as usual
-            // Beta is 50% of sigma
-            
-            
-            var skillClassWidthPrior = Variable.Observed(Gamma.FromShapeAndRate(2, 250 * 250));
+            #region Parameters            
             var skillClassWidth = Variable<double>.Random(skillClassWidthPrior).Named("skillClassWidth"); // β
             skillClassWidth.AddAttribute(new PointEstimate());
 
-            var skillDynamicsPrior = Variable.Observed(Gamma.FromShapeAndRate(2, 25 * 25));
             var skillDynamics = Variable<double>.Random(skillDynamicsPrior).Named("skillDynamics"); // γ
             skillDynamics.AddAttribute(new PointEstimate());
 
-            var skillSharpnessDecreasePrior = Variable.Observed(Gamma.FromShapeAndRate(2, 10 * 10));
             var skillSharpnessDecrease = Variable<double>.Random(skillSharpnessDecreasePrior).Named("skillSharpnessDecrease"); // τ
             skillSharpnessDecrease.AddAttribute(new PointEstimate());
 
-            var skillDecayPrior = Variable.Observed(Gaussian.FromMeanAndVariance(1, 10 * 10));
             var skillDecay = Variable<double>.Random(skillDecayPrior).Named("skillDecay");
             skillDecay.AddAttribute(new PointEstimate());
 
@@ -229,7 +239,7 @@ namespace ts.core.TrueSkill2
                         var playerIndex = matches[nMatches][nTeamsPerMatch][nPlayersPerTeam].Named("playerIndex");
                         var matchIndex = playerMatchMapping[playerIndex][nMatches];
 
-                        var dampedSkill = Variable<double>.Factor(Damp.Backward, skills[playerIndex][matchIndex], 0.1);
+                        var dampedSkill = Variable<double>.Factor(Damp.Backward, skills[playerIndex][matchIndex], skillDamping);
                         playerPerformance[nTeamsPerMatch][nPlayersPerTeam] = Variable.GaussianFromMeanAndPrecision(dampedSkill, skillClassWidth);
                     }
 
@@ -275,7 +285,7 @@ namespace ts.core.TrueSkill2
             {
                 ShowFactorGraph = false,
                 Algorithm = new ExpectationPropagation(),
-                NumberOfIterations = 1000,
+                NumberOfIterations = numberOfIterations,
                 ModelName = "TrueSkill2",
                 Compiler =
                 {
@@ -283,8 +293,7 @@ namespace ts.core.TrueSkill2
                     GenerateInMemory = false,
                     WriteSourceFiles = true,
                     UseParallelForLoops = true,
-                    ShowWarnings = false,
-                    GeneratedSourceFolder = "/mnt/win/Andris/Work/WIN/trueskill/ts.core/generated_source"
+                    ShowWarnings = false
                 },
             };
             // inferenceEngine.Compiler.GivePriorityTo(typeof(GaussianFromMeanAndVarianceOp_PointVariance));
@@ -292,17 +301,6 @@ namespace ts.core.TrueSkill2
             // inferenceEngine.Compiler.GivePriorityTo(typeof(GaussianProductOp_SHG09));
 
             #region Inference
-
-            // var rawMatches = Utils.ReadMatchesFromFile<Match<LeaguePlayerStat>>("/mnt/win/Andris/Work/WIN/trueskill/ts.core/Data/abios_lol_matches_with_stats_and_converted_champion_ids.json").OrderBy(x => x.Date).ThenBy(x => x.Id);
-            // var rawMatches = Utils.ReadMatchesFromFile<Match<CsgoPlayerStat>>("/mnt/win/Andris/Work/WIN/trueskill/ts.core/Data/abios_csgo_matches_with_stats.json").OrderBy(x => x.Date).ThenBy(x => x.Id);
-            var excluded = new[] {313184};
-            var rawMatches = Utils.ReadMatchesFromFile<Match<DotaPlayerStat>>("/mnt/win/Andris/Work/WIN/trueskill/ts.core/Data/abios_dota2_matches_with_stats.json").Where(x => !excluded.Contains(x.Id)).OrderBy(x => x.Date).ThenBy(x => x.Id);
-            
-            // var players = JsonConvert.DeserializeObject<Dictionary<int, string>>(File.ReadAllText("/mnt/win/Andris/Work/WIN/trueskill/ts.core/Data/abios_lol_player_names.json"));
-            // var players = JsonConvert.DeserializeObject<Dictionary<int, string>>(File.ReadAllText("/mnt/win/Andris/Work/WIN/trueskill/ts.core/Data/abios_csgo_player_names.json"));
-            var players = JsonConvert.DeserializeObject<Dictionary<int, string>>(File.ReadAllText("/mnt/win/Andris/Work/WIN/trueskill/ts.core/Data/abios_dota2_player_names.json"));
-            Console.WriteLine("OK.");
-            var batchSize = 38432; // total dota2 matches: 38432, total lol matches: 28636, total csgo matches: 56569
 
             // global (w.r.t. the batches) dictionary that keeps track of player skills
             var playerSkill = new Dictionary<int, Gaussian>();
@@ -577,13 +575,14 @@ namespace ts.core.TrueSkill2
             {
                 Console.WriteLine();
                 var i = 1;
-                foreach (var (key, value) in playerSkill.OrderByDescending(ordering).Take(100))
+                foreach (var (key, value) in playerSkill.OrderByDescending(ordering))
                 {
                     Console.WriteLine($"{i}. {players[key]} ({key}) : {value.GetMean():F0}, {Math.Sqrt(value.GetVariance()):F}");
                     i++;
                 }
             }
         }
+
 
 
         private static double Validate(double? value, double min = 0, double max = double.PositiveInfinity)
