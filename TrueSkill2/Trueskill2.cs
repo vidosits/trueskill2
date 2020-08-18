@@ -17,6 +17,12 @@ namespace ts.core.TrueSkill2
 {
     public static class Trueskill2
     {
+        public static Gaussian Decay(Gaussian rating, int timeLapse, double defMean, double defDeviation)
+        {
+        	var newVariance = Math.Pow(Math.Sqrt(rating.GetVariance()) + Math.Max(0, timeLapse - 30), 2);
+            return Gaussian.FromMeanAndVariance(rating.GetMean() - 2 * timeLapse, newVariance);
+        }
+
         public static void Run()
         {
             #region Parameters
@@ -24,27 +30,27 @@ namespace ts.core.TrueSkill2
             const int numberOfStats = 13;
             const double skillMean = 1500.0; // μ
             const double skillDeviation = 250; // σ
-            var skillClassWidthPrior = Variable.Observed(Gamma.FromShapeAndRate(2, 250 * 250)); // β
+            var skillClassWidthPrior = Variable.Observed(Gamma.FromShapeAndRate(1, 250 * 250)); // β
             var skillDynamicsPrior = Variable.Observed(Gamma.FromShapeAndRate(2, 25 * 25)); // γ
-			var skillSharpnessDecreasePrior = Variable.Observed(Gamma.FromShapeAndRate(2, 10 * 10)); // τ
-			var skillDecayPrior = Variable.Observed(Gaussian.FromMeanAndVariance(1, 10 * 10)); // decay
-			var skillDamping = 0.1; // strength of the backward damping, the smaller it is the lower the rating inflation but the more iterations the algo needs to converge
-			var numberOfIterations = 100;
-			var batchSize = 38432; // total dota2 matches: 38432, total lol matches: 28636, total csgo matches: 56569
+            var skillSharpnessDecreasePrior = Variable.Observed(Gamma.FromShapeAndRate(2, 10 * 10)); // τ
+            var skillDamping = 0.1; // strength of the backward damping, the smaller it is the lower the rating inflation but the more iterations the algo needs to converge
+            var numberOfIterations = 100;
+            var batchSize = 38432; // total dota2 matches: 38432, total lol matches: 28636, total csgo matches: 56569
 
-			var gameName = "dota2"; // options: lol, csgo, dota2
-			var excludedMatchIds = new[] {313184}; // some matches from Abios have incorrect data, we need to exclude processing them here
+            var gameName = "dota2"; // options: lol, csgo, dota2
+            var excludedMatchIds = new[] {313184}; // some matches from Abios have incorrect data, we need to exclude processing them here
 
-			/* you HAVE TO use the correct type for the selected game above:
-			dota2: DotaPlayerStat
-			lol: LeaguePlayerStat
-			csgo: CsgoPlayerStat
-			*/
-			var rawMatches = Utils.ReadMatchesFromFile<Match<DotaPlayerStat>>($"/home/ubuntu/ratings/Data/abios_{gameName}_matches_with_stats.json").Where(x => !excludedMatchIds.Contains(x.Id)).OrderBy(x => x.Date).ThenBy(x => x.Id);
-			var players = JsonConvert.DeserializeObject<Dictionary<int, string>>(File.ReadAllText($"/home/ubuntu/ratings/Data/abios_{gameName}_player_names.json"));
+            /* you HAVE TO use the correct type for the selected game above:
+            dota2: DotaPlayerStat
+            lol: LeaguePlayerStat
+            csgo: CsgoPlayerStat
+            */
+            //var rawMatches = Utils.ReadMatchesFromFile<Match<DotaPlayerStat>>($"/home/ubuntu/ratings/Data/abios_{gameName}_matches_with_stats.json").Where(x => !excludedMatchIds.Contains(x.Id)).OrderBy(x => x.Date).ThenBy(x => x.Id);
+            //var players = JsonConvert.DeserializeObject<Dictionary<int, string>>(File.ReadAllText($"/home/ubuntu/ratings/Data/abios_{gameName}_player_names.json"));
+            var rawMatches = Utils.ReadMatchesFromFile<Match<DotaPlayerStat>>($"/home/andris/ratings/Data/abios_{gameName}_matches_with_stats.json").Where(x => !excludedMatchIds.Contains(x.Id)).OrderBy(x => x.Date).ThenBy(x => x.Id);
+            var players = JsonConvert.DeserializeObject<Dictionary<int, string>>(File.ReadAllText($"/home/andris/ratings/Data/abios_{gameName}_player_names.json"));
             Console.WriteLine("OK.");
 
-            
             #endregion
 
             #region Constants
@@ -67,18 +73,17 @@ namespace ts.core.TrueSkill2
 
             #endregion
 
-            #region Parameters            
+            #region Parameters
+
             var skillClassWidth = Variable<double>.Random(skillClassWidthPrior).Named("skillClassWidth"); // β
             skillClassWidth.AddAttribute(new PointEstimate());
 
             var skillDynamics = Variable<double>.Random(skillDynamicsPrior).Named("skillDynamics"); // γ
             skillDynamics.AddAttribute(new PointEstimate());
 
-            var skillSharpnessDecrease = Variable<double>.Random(skillSharpnessDecreasePrior).Named("skillSharpnessDecrease"); // τ
+            var skillSharpnessDecrease =
+                Variable<double>.Random(skillSharpnessDecreasePrior).Named("skillSharpnessDecrease"); // τ
             skillSharpnessDecrease.AddAttribute(new PointEstimate());
-
-            var skillDecay = Variable<double>.Random(skillDecayPrior).Named("skillDecay");
-            skillDecay.AddAttribute(new PointEstimate());
 
             #region Stats
 
@@ -182,8 +187,7 @@ namespace ts.core.TrueSkill2
             #endregion
 
             #region Mapping
-            
-            
+
             // This array is used to hold the mapping between the index (m) of the m-th match in the batch
             // and the index of the same match for the n-th player in the skills array
             // This is needed because we keep track of player skills in a jagged array like the following:
@@ -214,15 +218,14 @@ namespace ts.core.TrueSkill2
                 {
                     using (Variable.If(matchBlock.Index == 0))
                     {
-                        skills[playerBlock.Index][matchBlock.Index] = Variable<double>.Random(skillPriors[playerBlock.Index]);
+                        skills[playerBlock.Index][matchBlock.Index] =
+                            Variable<double>.Random(skillPriors[playerBlock.Index]);
                     }
 
                     using (Variable.If(matchBlock.Index > 0))
                     {
                         skills[playerBlock.Index][matchBlock.Index] = Variable.GaussianFromMeanAndPrecision(
-                            Variable.GaussianFromMeanAndPrecision(skills[playerBlock.Index][matchBlock.Index - 1] - skillDecay * playerTimeLapse[playerBlock.Index][matchBlock.Index],
-                                skillSharpnessDecrease / playerTimeLapse[playerBlock.Index][matchBlock.Index]),
-                            skillDynamics);
+                            Variable.GaussianFromMeanAndPrecision(skills[playerBlock.Index][matchBlock.Index - 1], skillSharpnessDecrease / playerTimeLapse[playerBlock.Index][matchBlock.Index]), skillDynamics);
                     }
                 }
             }
@@ -293,8 +296,9 @@ namespace ts.core.TrueSkill2
                     GenerateInMemory = false,
                     WriteSourceFiles = true,
                     UseParallelForLoops = true,
-                    ShowWarnings = false
+                    ShowWarnings = false,
                 },
+                OptimiseForVariables = new IVariable[] {skills}
             };
             // inferenceEngine.Compiler.GivePriorityTo(typeof(GaussianFromMeanAndVarianceOp_PointVariance));
             // inferenceEngine.Compiler.GivePriorityTo(typeof(GaussianProductOp_PointB));
@@ -376,7 +380,7 @@ namespace ts.core.TrueSkill2
                             batchPlayerMatchCount.Add(1);
 
                             // set the time elapsed since the last time this player has played
-                            batchPlayerTimeLapse.Add(new List<double> {(match.Date - globalPlayerLastPlayed[player]).Days});
+                            batchPlayerTimeLapse.Add(new List<double>{(match.Date - globalPlayerLastPlayed[player]).Days});
 
                             // set up the array that will hold the mapping between the i-th match and the players' matches
                             batchPlayerMatchMapping.Add(new int[batchSize]);
@@ -546,7 +550,14 @@ namespace ts.core.TrueSkill2
 
                 // update the parameters
                 var inferredSkills = inferenceEngine.Infer<Gaussian[][]>(skills);
-                foreach (var (i, skillOverTime) in inferredSkills.Enumerate()) playerSkill[batchIndexToAbiosId[i]] = skillOverTime.Last();
+
+                var lastMatchDate = globalPlayerLastPlayed.Values.Max();
+                foreach (var (i, skillOverTime) in inferredSkills.Enumerate())
+                {
+                    var playerAbiosId = batchIndexToAbiosId[i];
+                    var playerLapse = lastMatchDate - globalPlayerLastPlayed[playerAbiosId];
+                    playerSkill[playerAbiosId] = Decay(skillOverTime.Last(), playerLapse.Days, skillMean, skillDeviation);
+                }
 
                 // var skillClassWidthPriorValue = inferenceEngine.Infer<Gamma>(skillClassWidth);
                 // var skillDynamicsPriorValue = inferenceEngine.Infer<Gamma>(skillDynamics);
@@ -563,26 +574,27 @@ namespace ts.core.TrueSkill2
 
             #endregion
 
+			var _lastMatchDate = globalPlayerLastPlayed.Values.Max();
             var orderings = new Func<KeyValuePair<int, Gaussian>, double>[]
             {
                 s => s.Value.GetMean() - (skillMean / skillDeviation) * Math.Sqrt(s.Value.GetVariance()),
-                s => s.Value.GetMean() - 3 * Math.Sqrt(s.Value.GetVariance()),
-                s => s.Value.GetMean() - Math.Sqrt(s.Value.GetVariance()),
-                s => s.Value.GetMean(),
+                // s => s.Value.GetMean() - 3 * Math.Sqrt(s.Value.GetVariance()),
+                // s => s.Value.GetMean() - Math.Sqrt(s.Value.GetVariance()),
+                // s => s.Value.GetMean(),
             };
-            
+
             foreach (var ordering in orderings)
             {
                 Console.WriteLine();
                 var i = 1;
-                foreach (var (key, value) in playerSkill.OrderByDescending(ordering))
+                foreach (var (key, value) in playerSkill.OrderByDescending(ordering).Take(50))
                 {
-                    Console.WriteLine($"{i}. {players[key]} ({key}) : {value.GetMean():F0}, {Math.Sqrt(value.GetVariance()):F}");
+                	var playerLapse = _lastMatchDate - globalPlayerLastPlayed[key];
+                    Console.WriteLine($"{i}. {players[key]} ({key}) : {value.GetMean():F0}, {Math.Sqrt(value.GetVariance()):F}, hasn't played for: {playerLapse.Days} days.");
                     i++;
                 }
             }
         }
-
 
 
         private static double Validate(double? value, double min = 0, double max = double.PositiveInfinity)

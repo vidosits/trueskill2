@@ -5,3 +5,6 @@ Folder.DotSettings.user
 Test.cs
 *.json
 generated_source
+release
+Data
+GeneratedSource

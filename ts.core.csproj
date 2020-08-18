@@ -12,14 +12,17 @@
 
   <ItemGroup>
     <Compile Remove="assemblies\**" />
+    <Compile Remove="release\**" />
   </ItemGroup>
 
   <ItemGroup>
     <EmbeddedResource Remove="assemblies\**" />
+    <EmbeddedResource Remove="release\**" />
   </ItemGroup>
 
   <ItemGroup>
     <None Remove="assemblies\**" />
+    <None Remove="release\**" />
   </ItemGroup>
 
   <ItemGroup>
@@ -32,10 +35,6 @@
     <Reference Include="Microsoft.ML.Probabilistic.Learners, Version=65534.0.0.0, Culture=neutral, PublicKeyToken=e4813102a62778da">
       <HintPath>assemblies\Microsoft.ML.Probabilistic.Learners.dll</HintPath>
     </Reference>
-  </ItemGroup>
-
-  <ItemGroup>
-    <Folder Include="generated_source" />
   </ItemGroup>
 
 </Project>
