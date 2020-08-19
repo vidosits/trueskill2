@@ -17,10 +17,10 @@ namespace ts.core.TrueSkill2
 {
     public static class Trueskill2
     {
-        public static Gaussian Decay(Gaussian rating, int timeLapse, double defMean, double defDeviation)
+        public static Gaussian Decay(Gaussian rating, int timeLapse)
         {
         	var newVariance = Math.Pow(Math.Sqrt(rating.GetVariance()) + Math.Max(0, timeLapse - 30), 2);
-            return Gaussian.FromMeanAndVariance(rating.GetMean() - 2 * timeLapse, newVariance);
+            return Gaussian.FromMeanAndVariance(rating.GetMean(), newVariance);
         }
 
         public static void Run()
@@ -35,10 +35,10 @@ namespace ts.core.TrueSkill2
             var skillSharpnessDecreasePrior = Variable.Observed(Gamma.FromShapeAndRate(2, 10 * 10)); // τ
             var skillDamping = 0.1; // strength of the backward damping, the smaller it is the lower the rating inflation but the more iterations the algo needs to converge
             var numberOfIterations = 100;
-            var batchSize = 38432; // total dota2 matches: 38432, total lol matches: 28636, total csgo matches: 56569
+            var batchSize = 56569; // total dota2 matches: 38432, total lol matches: 28636, total csgo matches: 56569
 
-            var gameName = "dota2"; // options: lol, csgo, dota2
-            var excludedMatchIds = new[] {313184}; // some matches from Abios have incorrect data, we need to exclude processing them here
+            var gameName = "csgo"; // options: lol, csgo, dota2
+            var excludedMatchIds = new[] {313184, 247153, 247154, 247201, 247324, 247328, 28174, 247464, 247465}; // some matches from Abios have incorrect data, we need to exclude processing them here
 
             /* you HAVE TO use the correct type for the selected game above:
             dota2: DotaPlayerStat
@@ -351,7 +351,18 @@ namespace ts.core.TrueSkill2
                 foreach (var (matchIndex, match) in batch.Enumerate())
                 {
                     var winnerId = match.Winner;
-                    var loserId = match.Rosters.Single(x => x.Key != winnerId).Key;
+                    var loserId = -1;
+                    try
+                    {
+                        loserId = match.Rosters.Single(x => x.Key != winnerId).Key;
+                    }
+                    catch (System.InvalidOperationException e)
+                    {
+                        Console.WriteLine($"error in match: {match.Id}. WinnerId {winnerId} not in rosters.");
+                        // throw;
+                    }
+
+                    
                     var teams = new[] {match.Rosters[winnerId].ToArray(), match.Rosters[loserId].ToArray()};
                     foreach (var player in teams.SelectMany(x => x))
                     {
@@ -556,7 +567,7 @@ namespace ts.core.TrueSkill2
                 {
                     var playerAbiosId = batchIndexToAbiosId[i];
                     var playerLapse = lastMatchDate - globalPlayerLastPlayed[playerAbiosId];
-                    playerSkill[playerAbiosId] = Decay(skillOverTime.Last(), playerLapse.Days, skillMean, skillDeviation);
+                    playerSkill[playerAbiosId] = Decay(skillOverTime.Last(), playerLapse.Days);
                 }
 
                 // var skillClassWidthPriorValue = inferenceEngine.Infer<Gamma>(skillClassWidth);
