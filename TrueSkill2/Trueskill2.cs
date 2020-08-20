@@ -49,6 +49,7 @@ namespace ts.core.TrueSkill2
             //var players = JsonConvert.DeserializeObject<Dictionary<int, string>>(File.ReadAllText($"/home/ubuntu/ratings/Data/abios_{gameName}_player_names.json"));
             var rawMatches = Utils.ReadMatchesFromFile<Match<DotaPlayerStat>>($"/home/andris/ratings/Data/abios_{gameName}_matches_with_stats.json").Where(x => !excludedMatchIds.Contains(x.Id)).OrderBy(x => x.Date).ThenBy(x => x.Id);
             var players = JsonConvert.DeserializeObject<Dictionary<int, string>>(File.ReadAllText($"/home/andris/ratings/Data/abios_{gameName}_player_names.json"));
+            var playerTiers = JsonConvert.DeserializeObject<Dictionary<int, int>>(File.ReadAllText($"/home/andris/ratings/Data/abios_{gameName}_player_tiers.json"));
             Console.WriteLine("OK.");
 
             #endregion
@@ -369,7 +370,8 @@ namespace ts.core.TrueSkill2
                         // if this is the first time that we've ever seen this player, initialize his/her global skill with the prior
                         if (!playerSkill.ContainsKey(player))
                         {
-                            playerSkill[player] = Gaussian.FromMeanAndVariance(skillMean - 2 * (match.Tier - 1) * skillDeviation, Math.Pow(skillDeviation, 2));
+                            var playerTier = playerTiers[player];
+                            playerSkill[player] = Gaussian.FromMeanAndVariance(skillMean - (playerTier - 1) * skillDeviation, Math.Pow(skillDeviation, 2));
                             // playerSkill[player] = Gaussian.FromMeanAndVariance(skillMean, Math.Pow(skillDeviation, 2));
                             globalPlayerLastPlayed[player] = match.Date;
                         }
