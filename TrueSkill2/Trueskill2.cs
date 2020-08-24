@@ -274,6 +274,7 @@ namespace ts.core.TrueSkill2
                 //             {
                 //                 using (Variable.IfNot(isStatMissing[nMatches][nTeamsPerMatch][nPlayersPerTeam][nStats]))
                 //                 {
+                						//TODO: missing parantheses around mean
                 //                     stats[nMatches][nTeamsPerMatch][nPlayersPerTeam][nStats].SetTo(Variable.Max(0,
                 //                         Variable.GaussianFromMeanAndPrecision(gaussianStatParams[heroId][nStats][0] * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] + gaussianStatParams[heroId][nStats][1] * (teamPerformance[opponentTeamIndex] / 5) * matchLengths[nMatches],
                 //                             gammaStatParams[heroId][nStats] / matchLengths[nMatches])));
@@ -297,7 +298,7 @@ namespace ts.core.TrueSkill2
                     GenerateInMemory = false,
                     WriteSourceFiles = true,
                     UseParallelForLoops = true,
-                    ShowWarnings = false,
+                    ShowWarnings = false
                 },
                 OptimiseForVariables = new IVariable[] {skills}
             };
@@ -357,7 +358,7 @@ namespace ts.core.TrueSkill2
                     {
                         loserId = match.Rosters.Single(x => x.Key != winnerId).Key;
                     }
-                    catch (System.InvalidOperationException e)
+                    catch (System.InvalidOperationException)
                     {
                         Console.WriteLine($"error in match: {match.Id}. WinnerId {winnerId} not in rosters.");
                         // throw;
@@ -372,7 +373,6 @@ namespace ts.core.TrueSkill2
                         {
                             var playerTier = playerTiers[player];
                             playerSkill[player] = Gaussian.FromMeanAndVariance(skillMean - (playerTier - 1) * skillDeviation, Math.Pow(skillDeviation, 2));
-                            // playerSkill[player] = Gaussian.FromMeanAndVariance(skillMean, Math.Pow(skillDeviation, 2));
                             globalPlayerLastPlayed[player] = match.Date;
                         }
 
@@ -603,7 +603,7 @@ namespace ts.core.TrueSkill2
                 foreach (var (key, value) in playerSkill.OrderByDescending(ordering).Take(50))
                 {
                 	var playerLapse = _lastMatchDate - globalPlayerLastPlayed[key];
-                    Console.WriteLine($"{i}. {players[key]} ({key}) : {value.GetMean():F0}, {Math.Sqrt(value.GetVariance()):F}, hasn't played for: {playerLapse.Days} days.");
+                    Console.WriteLine($"{i, 2}. {players[key], -15} ({key,5}) : {value.GetMean(), 4:F0}, {Math.Sqrt(value.GetVariance()),6:F}. Hasn't played for: {playerLapse.Days, 2} days.");
                     i++;
                 }
             }
