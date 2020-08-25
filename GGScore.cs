@@ -35,7 +35,7 @@ namespace GGScore
             var rawMatches = Utils.ReadMatchesFromFile<Match<PlayerStat>>(Path.Join(inputFileDir, $"abios_{gameName}_matches_with_stats.json")).Where(x => !excludedMatchIds.Contains(x.Id)).OrderBy(x => x.Date).ThenBy(x => x.Id).ToArray();
 
             var players = JsonConvert.DeserializeObject<Dictionary<int, string>>(File.ReadAllText(Path.Join(inputFileDir, $"abios_{gameName}_player_names.json")));
-            var playerTiers = JsonConvert.DeserializeObject<Dictionary<int, int>>(File.ReadAllText(Path.Join(inputFileDir, $"abios_{gameName}_player_tiers.json")));
+            var playerTiers = JsonConvert.DeserializeObject<Dictionary<int, double>>(File.ReadAllText(Path.Join(inputFileDir, $"abios_{gameName}_player_tiers.json")));
             Console.WriteLine("Done.");
 
             var batchSize = rawMatches.Length;
