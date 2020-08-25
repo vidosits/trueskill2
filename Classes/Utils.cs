@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using Newtonsoft.Json;
 
-namespace ts.core.Classes
+namespace GGScore.Classes
 {
     public static class Utils
     {

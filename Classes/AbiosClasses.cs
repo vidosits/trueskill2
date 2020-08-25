@@ -1,9 +1,13 @@
 using System;
 using System.Collections.Generic;
 
-namespace ts.core.Classes
+namespace GGScore.Classes
 {
-    public class DotaPlayerStat
+    public class PlayerStat
+    {
+        
+    }
+    public class DotaPlayerStat : PlayerStat
     {
         public int? HeroId { get; set; }
         public double? Kills { get; set; }
@@ -24,7 +28,7 @@ namespace ts.core.Classes
         public double? CampsStacked { get; set; }
     }
 
-    public class CsgoPlayerStat
+    public class CsgoPlayerStat : PlayerStat
     {
         public double? Kills { get; set; }
         public double? Deaths { get; set; }
@@ -33,7 +37,7 @@ namespace ts.core.Classes
         public double? Adr { get; set; }
     }
     
-    public class LeaguePlayerStat
+    public class LeaguePlayerStat : PlayerStat
     {
         public int? ChampionId { get; set; }
         public string ChampionName { get; set; }
@@ -62,7 +66,7 @@ namespace ts.core.Classes
         public int Id { get; set; }
         public DateTime Date {get; set;}
         public Dictionary<int, IList<int>> Rosters { get; set; }
-        // public Dictionary<int, int> Scores { get; set; }
+        
         public int SeriesId { get; set; }
         public int Winner { get; set; }
         public int Tier { get; set; }

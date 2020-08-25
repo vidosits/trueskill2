@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace ts.core.Classes
+namespace GGScore.Classes
 {
     public static class ExtensionMethods
     {
