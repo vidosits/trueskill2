@@ -18,14 +18,14 @@ namespace GGScore
     {
         private static Gaussian Decay(Gaussian rating, int timeLapse)
         {
-            var newVariance = Math.Pow(Math.Sqrt(rating.GetVariance()) + Math.Max(0, timeLapse - 30), 2);
-            return Gaussian.FromMeanAndVariance(rating.GetMean(), newVariance);
+            return Gaussian.FromMeanAndVariance(Math.Max(rating.GetMean() - 3 * timeLapse, 1250), rating.GetVariance());
         }
 
-        public static void Infer(double skillMean, double skillDeviation, Gamma skillClassWidthPriorValue, Gamma skillDynamicsPriorValue, Gamma skillSharpnessDecreasePriorValue, double skillDamping, int numberOfIterations, string gameName, int[] excludedMatchIds, string inputFileDir, string outputFileDir, int outputLimit, string[] parameterMessages)
+        public static void Infer(double skillMean, double skillDeviation, Gamma skillClassWidthPriorValue, Gamma skillDynamicsPriorValue, Gamma skillSharpnessDecreasePriorValue, double skillDamping, int numberOfIterations, string gameName, int[] excludedMatchIds, string inputFileDir,
+            string outputFileDir, int outputLimit, string[] parameterMessages)
         {
             var watch = System.Diagnostics.Stopwatch.StartNew();
-            
+
             #region Parameters
 
             var skillClassWidthPrior = Variable.Observed(skillClassWidthPriorValue); // β
@@ -53,6 +53,7 @@ namespace GGScore
 
             var nPlayers = new Range(numOfPlayers).Named("nPlayers");
             var nMatches = new Range(batchLength).Named("nMatches");
+            nMatches.AddAttribute(new Sequential());
 
             var nPlayersPerTeam = new Range(5).Named("nPlayersPerTeam");
             var nTeamsPerMatch = new Range(2).Named("nTeamsPerMatch");
@@ -96,9 +97,6 @@ namespace GGScore
 
             // Array to hold the time elapsed between matches of each player used for calculating the decay of skills
             var playerTimeLapse = Variable.Array(Variable.Array<double>(matchCounts), nPlayers).Named("playerTimeElapsed");
-
-            // Array used to hold the match length information, used for calculating skill updates
-            var matchLengths = Variable.Array<double>(nMatches).Named("matchLengths");
 
             #endregion
 
@@ -213,9 +211,6 @@ namespace GGScore
             // holds the mapping between the batch index of a match and the j-th player's skill in that match
             var batchPlayerMatchMapping = new List<int[]>();
 
-            // holds the length of each match in this batch
-            var batchMatchLengths = new double[batchSize];
-
             for (var matchIndex = 0; matchIndex < batchSize; ++matchIndex)
             {
                 var match = rawMatches[matchIndex];
@@ -291,9 +286,6 @@ namespace GGScore
 
                 // set playerIndex
                 batchMatches[matchIndex] = teams.Select(t => t.Select(p => abiosIdToBatchIndex[p]).ToArray()).ToArray();
-
-                // set matchLength
-                batchMatchLengths[matchIndex] = match.MatchLength;
             }
 
             Console.WriteLine("Batch is ready to be processed.");
@@ -318,7 +310,6 @@ namespace GGScore
             numberOfMatchesPlayedPerPlayer.ObservedValue = batchPlayerMatchCount.ToArray();
             skillPriors.ObservedValue = batchPriors.ToArray();
             playerTimeLapse.ObservedValue = batchPlayerTimeLapse.Select(Enumerable.ToArray).ToArray();
-            matchLengths.ObservedValue = batchMatchLengths;
 
             #endregion
 
@@ -360,18 +351,19 @@ namespace GGScore
                 outputFileContent.AppendLine($";{key}: {posterior}");
                 Console.WriteLine($";{key}: {posterior}");
             }
+
             outputFileContent.AppendLine("\n");
             Console.WriteLine("\n");
             object[] columns = {"Rank", "Name", "AbiosId", "Tier", "Mean", "Uncertainty", "Last played"};
             Console.WriteLine("{0,5} | {1, -13} ({2}) | {3, 4} | {4, 5} | {5} | {6, 13}", columns);
             Console.WriteLine(new string('-', 80));
             outputFileContent.AppendLine(string.Join(';', columns));
-            
+
             var playerRank = 1;
             foreach (var (key, value) in playerSkill.OrderByDescending(OrderingFunc))
             {
                 var playerLapse = lastGlobalMatchDate - globalPlayerLastPlayed[key];
-                object[] row = {playerRank, players[key], key, playerTiers[key] , value.GetMean(), Math.Sqrt(value.GetVariance()), playerLapse.Days};
+                object[] row = {playerRank, players[key], key, playerTiers[key], value.GetMean(), Math.Sqrt(value.GetVariance()), playerLapse.Days};
                 if (playerRank <= outputLimit) Console.WriteLine("{0, 5}   {1, -15} ({2,5})  {3, 6:0}   {4, 4:F0}  {5,10:F}  {6, 7} days ago", row);
                 outputFileContent.AppendLine(string.Join(';', row));
                 playerRank++;

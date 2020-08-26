@@ -6,6 +6,9 @@ using CommandLine;
 using Microsoft.ML.Probabilistic.Distributions;
 using Newtonsoft.Json;
 using GGScore.Classes;
+using Microsoft.ML.Probabilistic.Algorithms;
+using Microsoft.ML.Probabilistic.Models;
+using Microsoft.ML.Probabilistic.Models.Attributes;
 
 namespace GGScore
 {

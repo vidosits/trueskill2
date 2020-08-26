@@ -32,14 +32,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Folder Include="output\andras" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Reference Include="Microsoft.ML.Probabilistic, Version=65534.0.0.0, Culture=neutral, PublicKeyToken=e4813102a62778da">
       <HintPath>assemblies\Microsoft.ML.Probabilistic.dll</HintPath>
     </Reference>
     <Reference Include="Microsoft.ML.Probabilistic.Compiler, Version=65534.0.0.0, Culture=neutral, PublicKeyToken=e4813102a62778da">
       <HintPath>assemblies\Microsoft.ML.Probabilistic.Compiler.dll</HintPath>
-    </Reference>
-    <Reference Include="Microsoft.ML.Probabilistic.Learners, Version=65534.0.0.0, Culture=neutral, PublicKeyToken=e4813102a62778da">
-      <HintPath>assemblies\Microsoft.ML.Probabilistic.Learners.dll</HintPath>
     </Reference>
   </ItemGroup>
 
