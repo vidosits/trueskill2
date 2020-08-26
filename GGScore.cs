@@ -355,19 +355,24 @@ namespace GGScore
             foreach (var message in parameterMessages) outputFileContent.AppendLine($";{message}");
             outputFileContent.AppendLine($"\n;Last match date: {lastGlobalMatchDate}");
             outputFileContent.AppendLine($"\n;Inference took {watch.Elapsed.TotalMinutes:F} minutes.\n");
-            foreach (var (key, posterior) in posteriors) outputFileContent.AppendLine($";{key}: {posterior}");
+            foreach (var (key, posterior) in posteriors)
+            {
+                outputFileContent.AppendLine($";{key}: {posterior}");
+                Console.WriteLine($";{key}: {posterior}");
+            }
             outputFileContent.AppendLine("\n");
-            object[] columns = {"Rank", "Name", "AbiosId", "Mean", "Uncertainty", "Last played"};
-            Console.WriteLine("{0,5} | {1, -13} ({2}) | {3, 4} | {4} | {5, 13}", columns);
-            Console.WriteLine(new string('-', 70));
+            Console.WriteLine("\n");
+            object[] columns = {"Rank", "Name", "AbiosId", "Tier", "Mean", "Uncertainty", "Last played"};
+            Console.WriteLine("{0,5} | {1, -13} ({2}) | {3, 4} | {4, 5} | {5} | {6, 13}", columns);
+            Console.WriteLine(new string('-', 80));
             outputFileContent.AppendLine(string.Join(';', columns));
             
             var playerRank = 1;
             foreach (var (key, value) in playerSkill.OrderByDescending(OrderingFunc))
             {
                 var playerLapse = lastGlobalMatchDate - globalPlayerLastPlayed[key];
-                object[] row = {playerRank, players[key], key, value.GetMean(), Math.Sqrt(value.GetVariance()), playerLapse.Days};
-                if (playerRank <= outputLimit) Console.WriteLine("{0, 5}   {1, -15} ({2,5})   {3, 4:F0}  {4,10:F}  {5, 7} days ago", row);
+                object[] row = {playerRank, players[key], key, playerTiers[key] , value.GetMean(), Math.Sqrt(value.GetVariance()), playerLapse.Days};
+                if (playerRank <= outputLimit) Console.WriteLine("{0, 5}   {1, -15} ({2,5})  {3, 6:0}   {4, 4:F0}  {5,10:F}  {6, 7} days ago", row);
                 outputFileContent.AppendLine(string.Join(';', row));
                 playerRank++;
             }
