@@ -21,21 +21,22 @@ namespace GGScore
             return Gaussian.FromMeanAndVariance(Math.Max(rating.GetMean() - 3 * timeLapse, 1250), rating.GetVariance());
         }
 
-        public static void Infer(double skillMean, double skillDeviation, Gamma skillClassWidthPriorValue, Gamma skillDynamicsPriorValue, Gamma skillSharpnessDecreasePriorValue, double skillDamping, int numberOfIterations, string gameName, int[] excludedMatchIds, string inputFileDir,
+        public static void Infer(double skillMean, double skillDeviation, Gamma skillClassWidthPrior, Gamma skillDynamicsPrior, Gamma skillSharpnessDecreasePrior, double skillDamping, int numberOfIterations, string gameName, int[] excludedMatchIds, string inputFileDir,
             string outputFileDir, int outputLimit, string[] parameterMessages)
         {
             var watch = System.Diagnostics.Stopwatch.StartNew();
 
             #region Parameters
 
-            const int numberOfStats = 13;
-            
-            var skillClassWidthPrior = Variable.Observed(skillClassWidthPriorValue); // β
-            var skillDynamicsPrior = Variable.Observed(skillDynamicsPriorValue); // γ
-            var skillSharpnessDecreasePrior = Variable.Observed(skillSharpnessDecreasePriorValue); // τ
+            var numberOfStats = gameName switch
+            {
+                "lol" => 13,
+                "dota2" => 16,
+                "csgo" => 5,
+                _ => -1
+            };
 
-            var rawMatches = Utils.ReadMatchesFromFile<Match<LeaguePlayerStat>>(Path.Join(inputFileDir, $"abios_{gameName}_matches_with_stats.json")).Where(x => !excludedMatchIds.Contains(x.Id)).OrderBy(x => x.Date).ThenBy(x => x.Id).ToArray();
-
+            var rawMatches = Utils.ReadMatchesFromFile<Match>(Path.Join(inputFileDir, $"abios_{gameName}_matches_with_stats.json")).Where(x => !excludedMatchIds.Contains(x.Id)).OrderBy(x => x.Date).ThenBy(x => x.Id).ToArray();
             var players = JsonConvert.DeserializeObject<Dictionary<int, string>>(File.ReadAllText(Path.Join(inputFileDir, $"abios_{gameName}_player_names.json")));
             var playerTiers = JsonConvert.DeserializeObject<Dictionary<int, double>>(File.ReadAllText(Path.Join(inputFileDir, $"abios_{gameName}_player_tiers.json")));
             Console.WriteLine("Done.");
@@ -67,13 +68,13 @@ namespace GGScore
 
             #region Parameters
 
-            var skillClassWidth = Variable<double>.Random(skillClassWidthPrior).Named("skillClassWidth"); // β
+            var skillClassWidth = Variable.Random(skillClassWidthPrior).Named("skillClassWidth"); // β
             skillClassWidth.AddAttribute(new PointEstimate());
 
-            var skillDynamics = Variable<double>.Random(skillDynamicsPrior).Named("skillDynamics"); // γ
+            var skillDynamics = Variable.Random(skillDynamicsPrior).Named("skillDynamics"); // γ
             skillDynamics.AddAttribute(new PointEstimate());
 
-            var skillSharpnessDecrease = Variable<double>.Random(skillSharpnessDecreasePrior).Named("skillSharpnessDecrease"); // τ
+            var skillSharpnessDecrease = Variable.Random(skillSharpnessDecreasePrior).Named("skillSharpnessDecrease"); // τ
             skillSharpnessDecrease.AddAttribute(new PointEstimate());
 
             #endregion
@@ -97,12 +98,12 @@ namespace GGScore
                         {
                             using (Variable.Case(paramBlock.Index, 0))
                             {
-                                gaussianStatParamsPriors[nHeroes][statBlock.Index][paramBlock.Index] = Variable.Observed(Gaussian.FromMeanAndVariance(1, 4));
+                                gaussianStatParamsPriors[nHeroes][statBlock.Index][paramBlock.Index] = Variable.Observed(Gaussian.FromMeanAndVariance(1, 100 * 100));
                             }
 
                             using (Variable.Case(paramBlock.Index, 1))
                             {
-                                gaussianStatParamsPriors[nHeroes][statBlock.Index][paramBlock.Index] = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 4));
+                                gaussianStatParamsPriors[nHeroes][statBlock.Index][paramBlock.Index] = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 100 * 100));
                             }
                         }
 
@@ -111,12 +112,12 @@ namespace GGScore
                         {
                             using (Variable.Case(paramBlock.Index, 0))
                             {
-                                gaussianStatParamsPriors[nHeroes][statBlock.Index][paramBlock.Index] = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 4));
+                                gaussianStatParamsPriors[nHeroes][statBlock.Index][paramBlock.Index] = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 100 * 100));
                             }
 
                             using (Variable.Case(paramBlock.Index, 1))
                             {
-                                gaussianStatParamsPriors[nHeroes][statBlock.Index][paramBlock.Index] = Variable.Observed(Gaussian.FromMeanAndVariance(1, 4));
+                                gaussianStatParamsPriors[nHeroes][statBlock.Index][paramBlock.Index] = Variable.Observed(Gaussian.FromMeanAndVariance(1, 100 * 100));
                             }
                         }
 
@@ -127,7 +128,7 @@ namespace GGScore
 
             gaussianStatParams.AddAttribute(new PointEstimate());
 
-            gammaStatParamsPriors[nHeroes][nStats].SetTo(Variable.Observed(Gamma.FromMeanAndVariance(1, 10 * 10)));
+            gammaStatParamsPriors[nHeroes][nStats].SetTo(Variable.Observed(Gamma.FromMeanAndVariance(1, 100 * 100)));
             gammaStatParams[nHeroes][nStats].SetTo(Variable<double>.Random(gammaStatParamsPriors[nHeroes][nStats]));
             gammaStatParams.AddAttribute(new PointEstimate());
 
@@ -216,7 +217,7 @@ namespace GGScore
                     using (Variable.If(matchBlock.Index > 0))
                     {
                         skills[playerBlock.Index][matchBlock.Index] = Variable.GaussianFromMeanAndPrecision(
-                            Variable.GaussianFromMeanAndPrecision(skills[playerBlock.Index][matchBlock.Index - 1], skillSharpnessDecrease / playerTimeLapse[playerBlock.Index][matchBlock.Index]), skillDynamics);
+                            Variable.GaussianFromMeanAndPrecision(skills[playerBlock.Index][matchBlock.Index - 1], skillSharpnessDecrease / playerTimeLapse[playerBlock.Index][matchBlock.Index]) + 10, skillDynamics);
                     }
                 }
             }
@@ -434,50 +435,10 @@ namespace GGScore
                     {
                         if (match.PlayerStats != null)
                         {
-                            var statsForPlayer = new[]
-                            {
-                                Validate(match.PlayerStats[teams[teamIndex][playerIndex]].Kills),
-                                Validate(match.PlayerStats[teams[teamIndex][playerIndex]].Deaths),
-                                Validate(match.PlayerStats[teams[teamIndex][playerIndex]].Assists),
+                            playerStats[playerIndex] = match.PlayerStats[teams[teamIndex][playerIndex]].Stats.Select(x => Validate(x)).ToArray();
+                            playerStatsMissing[playerIndex] = match.PlayerStats[teams[teamIndex][playerIndex]].Stats.Select(x => IsValueMissing(x)).ToArray();
 
-                                Validate(match.PlayerStats[teams[teamIndex][playerIndex]].Level),
-                                Validate(match.PlayerStats[teams[teamIndex][playerIndex]].GoldEarned),
-                                Validate(match.PlayerStats[teams[teamIndex][playerIndex]].CreepScore),
-                                
-                                Validate(match.PlayerStats[teams[teamIndex][playerIndex]].DamageDealtToHeroes),
-                                Validate(match.PlayerStats[teams[teamIndex][playerIndex]].DamageDealtToObjectives),
-                                Validate(match.PlayerStats[teams[teamIndex][playerIndex]].DamageDealtToTurrets),
-                                
-                                Validate(match.PlayerStats[teams[teamIndex][playerIndex]].HealingDone),
-                                Validate(match.PlayerStats[teams[teamIndex][playerIndex]].CrowdControlTime),
-                                Validate(match.PlayerStats[teams[teamIndex][playerIndex]].WardsPlaced),
-                                Validate(match.PlayerStats[teams[teamIndex][playerIndex]].WardsDestroyed)
-                            };
-
-                            var statsForPlayerMissing = new[]
-                            {
-                                IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].Kills),
-                                IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].Deaths),
-                                IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].Assists),
-
-                                IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].Level),
-                                IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].GoldEarned),
-                                IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].CreepScore),
-                                
-                                IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].DamageDealtToHeroes),
-                                IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].DamageDealtToObjectives),
-                                IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].DamageDealtToTurrets),
-                                
-                                IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].HealingDone),
-                                IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].CrowdControlTime),
-                                IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].WardsPlaced),
-                                IsValueMissing(match.PlayerStats[teams[teamIndex][playerIndex]].WardsDestroyed)
-                            };
-
-                            playerStats[playerIndex] = statsForPlayer;
-                            playerStatsMissing[playerIndex] = statsForPlayerMissing;
-
-                            heroesPerPlayer[playerIndex] = match.PlayerStats[teams[teamIndex][playerIndex]].ChampionId.Value;
+                            heroesPerPlayer[playerIndex] = match.PlayerStats[teams[teamIndex][playerIndex]].HeroId.Value;
                             heroesPerPlayerMissing[playerIndex] = false;
                         }
                         else
@@ -514,12 +475,12 @@ namespace GGScore
             numOfPlayers.ObservedValue = batchPriors.Count;
 
             #endregion
-            
+
             #region Stats
 
             stats.ObservedValue = batchStats;
             isStatMissing.ObservedValue = batchStatMissing;
-            
+
             heroesPlayed.ObservedValue = batchHeroesPlayed;
             isHeroMissing.ObservedValue = batchIsHeroMissing;
 
@@ -600,7 +561,7 @@ namespace GGScore
             File.WriteAllText(outputFilePath, outputFileContent.ToString());
             Console.WriteLine($"Output saved to: {outputFilePath}");
         }
-        
+
         private static double Validate(double? value, double min = 0, double max = double.PositiveInfinity)
         {
             return !IsValueMissing(value, min, max) ? value.Value : min;
