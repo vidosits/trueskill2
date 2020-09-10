@@ -20,22 +20,22 @@ namespace GGScore
         [Option('s', "std", Default = 250.0, HelpText = "Default player rating standard deviation (std/sigma/σ).")]
         public double Std { get; set; }
 
-        [Option("betaShape", Default = 2.0, HelpText = "Shape value for the Gamma dist. from which β is drawn.")]
+        [Option("betaShape", Default = 2.0, HelpText = "Shape value for the Gamma dist. from which β (skill class width) is drawn.")]
         public double BetaShape { get; set; }
 
-        [Option("betaRate", Default = 250, HelpText = "Rate value for the Gamma dist. from which β is drawn.")]
+        [Option("betaRate", Default = 250, HelpText = "Rate value for the Gamma dist. from which β (skill class width) is drawn.")]
         public double BetaRate { get; set; }
 
-        [Option("gammaShape", Default = 2.0, HelpText = "Shape value for the Gamma dist. from which γ is drawn.")]
+        [Option("gammaShape", Default = 2.0, HelpText = "Shape value for the Gamma dist. from which γ (skill dynamics factor) is drawn.")]
         public double GammaShape { get; set; }
 
-        [Option("gammaRate", Default = 25, HelpText = "Rate value for the Gamma dist. from which γ is drawn.")]
+        [Option("gammaRate", Default = 25, HelpText = "Rate value for the Gamma dist. from which γ (skill dynamics factor) is drawn.")]
         public double GammaRate { get; set; }
 
-        [Option("tauShape", Default = 2.0, HelpText = "Shape value for the Gamma dist. from which τ is drawn.")]
+        [Option("tauShape", Default = 2.0, HelpText = "Shape value for the Gamma dist. from which τ (skill sharpness decrease) is drawn.")]
         public double TauShape { get; set; }
 
-        [Option("tauRate", Default = 50.0, HelpText = "Rate value for the Gamma dist. from which τ is drawn.")]
+        [Option("tauRate", Default = 50.0, HelpText = "Rate value for the Gamma dist. from which τ (skill sharpness decrease) is drawn.")]
         public double TauRate { get; set; }
 
         [Option('d', "damping", Default = 0.001, HelpText = "Damping for the Markov-chain part of the model.")]
@@ -69,12 +69,16 @@ namespace GGScore
 
         private static void Run(Options options)
         {
+            var b = Gamma.FromShapeAndRate(options.BetaShape, Math.Pow(options.BetaRate, 2));
+            var g = Gamma.FromShapeAndRate(options.GammaShape, Math.Pow(options.GammaRate, 2));
+            var t = Gamma.FromShapeAndRate(options.TauShape, Math.Pow(options.TauRate, 2));
+            
             var parameterMessages = new[]
             {
                 $"Skill prior: Gaussian({options.Mean}, {options.Std}^2)",
-                $"β: Gamma({options.BetaShape}, {options.BetaRate}^2)",
-                $"γ: Gamma({options.GammaShape}, {options.GammaRate}^2)",
-                $"τ: Gamma({options.TauShape}, {options.TauRate}^2)",
+                $"β: Shape: {options.BetaShape}, Rate sqrt: {options.BetaRate}, {b}",
+                $"γ: Shape: {options.GammaShape}, Rate sqrt: {options.GammaRate}, {g}",
+                $"τ: Shape: {options.TauShape}, Rate sqrt: {options.TauRate}, {t}",
                 $"Damping: {options.Damping}",
                 $"Iterations: {options.Iterations}",
                 $"Game: {options.Game}",
@@ -93,9 +97,9 @@ namespace GGScore
             Console.WriteLine();
             GGScore.Infer(options.Mean,
                 options.Std,
-                Gamma.FromShapeAndRate(options.BetaShape, Math.Pow(options.BetaRate, 2)),
-                Gamma.FromShapeAndRate(options.GammaShape, Math.Pow(options.GammaRate, 2)),
-                Gamma.FromShapeAndRate(options.TauShape, Math.Pow(options.TauRate, 2)),
+                b,
+                g,
+                t,
                 options.Damping,
                 options.Iterations,
                 options.Game,
