@@ -58,6 +58,9 @@ namespace GGScore
 
         [Option('l', "limit", Default = 50, HelpText = "Number of players to output from the rankings.")]
         public int Limit { get; set; }
+        
+        [Option('h', "history", Default = false, HelpText = "Flag indicates whether to export the skills jagged array.")]
+        public bool History { get; set; }
     }
 
     internal static class Program
@@ -107,7 +110,8 @@ namespace GGScore
                 options.InputDir,
                 options.OutputDir,
                 options.Limit,
-                parameterMessages);
+                parameterMessages,
+                options.History);
         }
     }
 }

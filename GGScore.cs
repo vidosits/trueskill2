@@ -21,8 +21,8 @@ namespace GGScore
             return Gaussian.FromMeanAndVariance(Math.Max(rating.GetMean() - 3 * timeLapse, 1250), rating.GetVariance());
         }
 
-        public static void Infer(double skillMean, double skillDeviation, Gamma skillClassWidthPriorValue, Gamma skillDynamicsPriorValue, Gamma skillSharpnessDecreasePriorValue, double skillDamping, int numberOfIterations, string gameName, int[] excludedMatchIds, string inputFileDir,
-            string outputFileDir, int outputLimit, string[] parameterMessages)
+        public static void Infer(double skillMean, double skillDeviation, Gamma skillClassWidthPrior, Gamma skillDynamicsPrior, Gamma skillSharpnessDecreasePrior, double skillDamping, int numberOfIterations, string gameName, int[] excludedMatchIds, string inputFileDir,
+            string outputFileDir, int outputLimit, string[] parameterMessages, bool history)
         {
             var watch = System.Diagnostics.Stopwatch.StartNew();
 
@@ -341,7 +341,7 @@ namespace GGScore
 
             var lastGlobalMatchDate = globalPlayerLastPlayed.Values.Max();
             double OrderingFunc(KeyValuePair<int, Gaussian> s) => s.Value.GetMean() - (skillMean / skillDeviation) * Math.Sqrt(s.Value.GetVariance());
-            var outputFileName = $"{gameName}_{DateTime.Now:yyyyMMddTHHmmss}.csv";
+            var outputFileName = $"{gameName}_{DateTime.Now:yyyyMMddTHHmmss}";
             var outputFileContent = new StringBuilder();
             foreach (var message in parameterMessages) outputFileContent.AppendLine($";{message}");
             outputFileContent.AppendLine($"\n;Last match date: {lastGlobalMatchDate}");
@@ -369,8 +369,18 @@ namespace GGScore
                 playerRank++;
             }
 
-            var outputFilePath = Path.Combine(outputFileDir, outputFileName);
+            Directory.CreateDirectory(outputFileDir);
+
+            var outputFilePath = Path.Combine(outputFileDir, outputFileName + ".csv");
             File.WriteAllText(outputFilePath, outputFileContent.ToString());
+
+            // if we export history
+            if (history)
+            {
+                File.WriteAllText(Path.Combine(outputFileDir, outputFileName + "_skills.json"), JsonConvert.SerializeObject(inferredSkills));
+                File.WriteAllText(Path.Combine(outputFileDir, outputFileName + "_id_map.json"), JsonConvert.SerializeObject(batchIndexToAbiosId));
+            }
+
             Console.WriteLine($"Output saved to: {outputFilePath}");
         }
     }
