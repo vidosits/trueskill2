@@ -22,15 +22,11 @@ namespace GGScore
         }
 
         public static void Infer(double skillMean, double skillDeviation, Gamma skillClassWidthPrior, Gamma skillDynamicsPrior, Gamma skillSharpnessDecreasePrior, double skillDamping, int numberOfIterations, string gameName, int[] excludedMatchIds, string inputFileDir,
-            string outputFileDir, int outputLimit, string[] parameterMessages, bool history)
+            string outputFileDir, int outputLimit, string[] parameterMessages, bool history, bool reversePriors)
         {
             var watch = System.Diagnostics.Stopwatch.StartNew();
 
             #region Parameters
-
-            var skillClassWidthPrior = Variable.Observed(skillClassWidthPriorValue); // β
-            var skillDynamicsPrior = Variable.Observed(skillDynamicsPriorValue); // γ
-            var skillSharpnessDecreasePrior = Variable.Observed(skillSharpnessDecreasePriorValue); // τ
 
             var rawMatches = Utils.ReadMatchesFromFile<Match<PlayerStat>>(Path.Join(inputFileDir, $"abios_{gameName}_matches_with_stats.json")).Where(x => !excludedMatchIds.Contains(x.Id)).OrderBy(x => x.Date).ThenBy(x => x.Id).ToArray();
 
@@ -62,13 +58,13 @@ namespace GGScore
 
             #region Parameters
 
-            var skillClassWidth = Variable<double>.Random(skillClassWidthPrior).Named("skillClassWidth"); // β
+            var skillClassWidth = Variable.Random(skillClassWidthPrior).Named("skillClassWidth"); // β
             skillClassWidth.AddAttribute(new PointEstimate());
 
-            var skillDynamics = Variable<double>.Random(skillDynamicsPrior).Named("skillDynamics"); // γ
+            var skillDynamics = Variable.Random(skillDynamicsPrior).Named("skillDynamics"); // γ
             skillDynamics.AddAttribute(new PointEstimate());
 
-            var skillSharpnessDecrease = Variable<double>.Random(skillSharpnessDecreasePrior).Named("skillSharpnessDecrease"); // τ
+            var skillSharpnessDecrease = Variable.Random(skillSharpnessDecreasePrior).Named("skillSharpnessDecrease"); // τ
             skillSharpnessDecrease.AddAttribute(new PointEstimate());
 
             #endregion
@@ -94,6 +90,9 @@ namespace GGScore
 
             // Jagged array holding the skills for all players through all their matches, the first column is the prior
             var skills = Variable.Array(Variable.Array<double>(matchCounts), nPlayers).Named("skills");
+
+            // Variable indicates forward or backward Markov chain for skills
+            var reversePriorChain = Variable.Observed(reversePriors).Named("reversePriors");
 
             // Array to hold the time elapsed between matches of each player used for calculating the decay of skills
             var playerTimeLapse = Variable.Array(Variable.Array<double>(matchCounts), nPlayers).Named("playerTimeElapsed");
@@ -126,23 +125,48 @@ namespace GGScore
             #endregion
 
             // Initialize skills variable array
-            using (var playerBlock = Variable.ForEach(nPlayers))
-            {
-                using (var matchBlock = Variable.ForEach(matchCounts))
-                {
-                    using (Variable.If(matchBlock.Index == 0))
-                    {
-                        skills[playerBlock.Index][matchBlock.Index] =
-                            Variable<double>.Random(skillPriors[playerBlock.Index]);
-                    }
 
-                    using (Variable.If(matchBlock.Index > 0))
+            using (Variable.If(reversePriorChain))
+            {
+                using (Variable.ForEach(nPlayers))
+                {
+                    using (var matchBlock = Variable.ForEach(matchCounts))
                     {
-                        skills[playerBlock.Index][matchBlock.Index] = Variable.GaussianFromMeanAndPrecision(
-                            Variable.GaussianFromMeanAndPrecision(skills[playerBlock.Index][matchBlock.Index - 1], skillSharpnessDecrease / playerTimeLapse[playerBlock.Index][matchBlock.Index]), skillDynamics);
+                        var baseCase = (matchBlock.Index == numberOfMatchesPlayedPerPlayer[nPlayers] - 1).Named("baseCase");
+
+                        using (Variable.If(baseCase))
+                        {
+                            skills[nPlayers][matchBlock.Index] = Variable<double>.Random(skillPriors[nPlayers]);
+                        }
+
+                        using (Variable.IfNot(baseCase))
+                        {
+                            skills[nPlayers][matchBlock.Index] = Variable.GaussianFromMeanAndPrecision(Variable.GaussianFromMeanAndPrecision(skills[nPlayers][matchBlock.Index + 1], skillSharpnessDecrease / playerTimeLapse[nPlayers][matchBlock.Index + 1]), skillDynamics);
+                        }
                     }
                 }
             }
+
+            using (Variable.IfNot(reversePriorChain))
+            {
+                using (Variable.ForEach(nPlayers))
+                {
+                    using (var matchBlock = Variable.ForEach(matchCounts))
+                    {
+                        using (Variable.If(matchBlock.Index == 0))
+                        {
+                            skills[nPlayers][matchBlock.Index] = Variable<double>.Random(skillPriors[nPlayers]);
+                        }
+
+                        using (Variable.If(matchBlock.Index > 0))
+                        {
+                            skills[nPlayers][matchBlock.Index] = Variable.GaussianFromMeanAndPrecision(Variable.GaussianFromMeanAndPrecision(skills[nPlayers][matchBlock.Index - 1], skillSharpnessDecrease / playerTimeLapse[nPlayers][matchBlock.Index]), skillDynamics);
+                        }
+                    }
+                }
+            }
+            
+
 
             using (Variable.ForEach(nMatches))
             {
