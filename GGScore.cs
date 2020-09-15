@@ -22,7 +22,7 @@ namespace GGScore
         }
 
         public static void Infer(double skillMean, double skillDeviation, Gamma skillClassWidthPrior, Gamma skillDynamicsPrior, Gamma skillSharpnessDecreasePrior, double skillDamping, int numberOfIterations, string gameName, int[] excludedMatchIds, string inputFileDir,
-            string outputFileDir, int outputLimit, string[] parameterMessages)
+            string outputFileDir, int outputLimit, string[] parameterMessages, bool history, bool reversePriors)
         {
             var watch = System.Diagnostics.Stopwatch.StartNew();
 
@@ -162,6 +162,9 @@ namespace GGScore
             // Jagged array holding the skills for all players through all their matches, the first column is the prior
             var skills = Variable.Array(Variable.Array<double>(matchCounts), nPlayers).Named("skills");
 
+            // Variable indicates forward or backward Markov chain for skills
+            var reversePriorChain = Variable.Observed(reversePriors).Named("reversePriors");
+
             // Array to hold the time elapsed between matches of each player used for calculating the decay of skills
             var playerTimeLapse = Variable.Array(Variable.Array<double>(matchCounts), nPlayers).Named("playerTimeElapsed");
 
@@ -204,23 +207,48 @@ namespace GGScore
             #endregion
 
             // Initialize skills variable array
-            using (var playerBlock = Variable.ForEach(nPlayers))
-            {
-                using (var matchBlock = Variable.ForEach(matchCounts))
-                {
-                    using (Variable.If(matchBlock.Index == 0))
-                    {
-                        skills[playerBlock.Index][matchBlock.Index] =
-                            Variable<double>.Random(skillPriors[playerBlock.Index]);
-                    }
 
-                    using (Variable.If(matchBlock.Index > 0))
+            using (Variable.If(reversePriorChain))
+            {
+                using (Variable.ForEach(nPlayers))
+                {
+                    using (var matchBlock = Variable.ForEach(matchCounts))
                     {
-                        skills[playerBlock.Index][matchBlock.Index] = Variable.GaussianFromMeanAndPrecision(
-                            Variable.GaussianFromMeanAndPrecision(skills[playerBlock.Index][matchBlock.Index - 1], skillSharpnessDecrease / playerTimeLapse[playerBlock.Index][matchBlock.Index]) + 10, skillDynamics);
+                        var baseCase = (matchBlock.Index == numberOfMatchesPlayedPerPlayer[nPlayers] - 1).Named("baseCase");
+
+                        using (Variable.If(baseCase))
+                        {
+                            skills[nPlayers][matchBlock.Index] = Variable<double>.Random(skillPriors[nPlayers]);
+                        }
+
+                        using (Variable.IfNot(baseCase))
+                        {
+                            skills[nPlayers][matchBlock.Index] = Variable.GaussianFromMeanAndPrecision(Variable.GaussianFromMeanAndPrecision(skills[nPlayers][matchBlock.Index + 1], skillSharpnessDecrease / playerTimeLapse[nPlayers][matchBlock.Index + 1]), skillDynamics);
+                        }
                     }
                 }
             }
+
+            using (Variable.IfNot(reversePriorChain))
+            {
+                using (Variable.ForEach(nPlayers))
+                {
+                    using (var matchBlock = Variable.ForEach(matchCounts))
+                    {
+                        using (Variable.If(matchBlock.Index == 0))
+                        {
+                            skills[nPlayers][matchBlock.Index] = Variable<double>.Random(skillPriors[nPlayers]);
+                        }
+
+                        using (Variable.If(matchBlock.Index > 0))
+                        {
+                            skills[nPlayers][matchBlock.Index] = Variable.GaussianFromMeanAndPrecision(Variable.GaussianFromMeanAndPrecision(skills[nPlayers][matchBlock.Index - 1], skillSharpnessDecrease / playerTimeLapse[nPlayers][matchBlock.Index]), skillDynamics);
+                        }
+                    }
+                }
+            }
+            
+
 
             using (Variable.ForEach(nMatches))
             {
@@ -529,7 +557,7 @@ namespace GGScore
 
             var lastGlobalMatchDate = globalPlayerLastPlayed.Values.Max();
             double OrderingFunc(KeyValuePair<int, Gaussian> s) => s.Value.GetMean() - (skillMean / skillDeviation) * Math.Sqrt(s.Value.GetVariance());
-            var outputFileName = $"{gameName}_{DateTime.Now:yyyyMMddTHHmmss}.csv";
+            var outputFileName = $"{gameName}_{DateTime.Now:yyyyMMddTHHmmss}";
             var outputFileContent = new StringBuilder();
             foreach (var message in parameterMessages) outputFileContent.AppendLine($";{message}");
             outputFileContent.AppendLine($"\n;Last match date: {lastGlobalMatchDate}");
@@ -557,8 +585,18 @@ namespace GGScore
                 playerRank++;
             }
 
-            var outputFilePath = Path.Combine(outputFileDir, outputFileName);
+            Directory.CreateDirectory(outputFileDir);
+
+            var outputFilePath = Path.Combine(outputFileDir, outputFileName + ".csv");
             File.WriteAllText(outputFilePath, outputFileContent.ToString());
+
+            // if we export history
+            if (history)
+            {
+                File.WriteAllText(Path.Combine(outputFileDir, outputFileName + "_skills.json"), JsonConvert.SerializeObject(inferredSkills));
+                File.WriteAllText(Path.Combine(outputFileDir, outputFileName + "_id_map.json"), JsonConvert.SerializeObject(batchIndexToAbiosId));
+            }
+
             Console.WriteLine($"Output saved to: {outputFilePath}");
         }
 

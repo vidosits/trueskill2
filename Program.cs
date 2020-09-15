@@ -58,6 +58,12 @@ namespace GGScore
 
         [Option('l', "limit", Default = 50, HelpText = "Number of players to output from the rankings.")]
         public int Limit { get; set; }
+        
+        [Option('h', "history", Default = false, HelpText = "Flag indicates whether to export the skills jagged array.")]
+        public bool History { get; set; }
+        
+        [Option('p', "priors", Default = "forward", HelpText = "Directionality of the Markov-chain. Forward is priors first, then chain. Backward is chain then priors. Valid options= [forward|backward]")]
+        public string PriorDirectionality { get; set; }
     }
 
     internal static class Program
@@ -72,6 +78,7 @@ namespace GGScore
             var b = Gamma.FromShapeAndRate(options.BetaShape, Math.Pow(options.BetaRate, 2));
             var g = Gamma.FromShapeAndRate(options.GammaShape, Math.Pow(options.GammaRate, 2));
             var t = Gamma.FromShapeAndRate(options.TauShape, Math.Pow(options.TauRate, 2));
+            var reversePriors = options.PriorDirectionality == "backward";
             
             var parameterMessages = new[]
             {
@@ -86,6 +93,7 @@ namespace GGScore
                 $"Input directory: {Path.GetFullPath(options.InputDir)}",
                 $"Output directory: {Path.GetFullPath(options.OutputDir)}",
                 $"Output limit: {options.Limit}",
+                $"Markov-chain prior directionality: {options.PriorDirectionality}"
             };
             
             Console.WriteLine("Using the following parameters:");
@@ -107,7 +115,9 @@ namespace GGScore
                 options.InputDir,
                 options.OutputDir,
                 options.Limit,
-                parameterMessages);
+                parameterMessages,
+                options.History,
+                reversePriors);
         }
     }
 }
