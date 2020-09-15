@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -17,7 +17,7 @@ namespace GGScore
         [Option('m', "mu", Default = 1500.0, HelpText = "Default (starting) (tier 1) player rating expected value (mean/mu/μ).")]
         public double Mean { get; set; }
 
-        [Option('s', "std", Default = 250.0, HelpText = "Default player rating standard deviation (std/sigma/σ).")]
+        [Option('s', "sigma", Default = 250.0, HelpText = "Default player rating standard deviation (std/sigma/σ).")]
         public double Std { get; set; }
 
         [Option("betaShape", Default = 2.0, HelpText = "Shape value for the Gamma dist. from which β (skill class width) is drawn.")]
