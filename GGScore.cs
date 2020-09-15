@@ -28,14 +28,13 @@ namespace GGScore
 
             #region Parameters
 
-            
-
             var rawMatches = Utils.ReadMatchesFromFile<Match>(Path.Join(inputFileDir, $"abios_{gameName}_matches_with_stats.json")).Where(x => !excludedMatchIds.Contains(x.Id)).OrderBy(x => x.Date).ThenBy(x => x.Id).ToArray();
             var players = JsonConvert.DeserializeObject<Dictionary<int, string>>(File.ReadAllText(Path.Join(inputFileDir, $"abios_{gameName}_player_names.json")));
             var playerTiers = JsonConvert.DeserializeObject<Dictionary<int, double>>(File.ReadAllText(Path.Join(inputFileDir, $"abios_{gameName}_player_tiers.json")));
+            var statPriors = JsonConvert.DeserializeObject<List<Dictionary<string, List<double>>>>(File.ReadAllText(Path.Join(inputFileDir, $"{gameName}_stat_priors.json")));
 
             var numberOfStats = rawMatches.First(x => x.PlayerStats != null).PlayerStats.First().Value.Stats.Length;
-            
+
             Console.WriteLine("Done.");
 
             var batchSize = rawMatches.Length;
@@ -59,7 +58,6 @@ namespace GGScore
 
             var nStats = new Range(numberOfStats).Named("nStats");
             var nParamsPerStat = new Range(2).Named("nParamsPerStat");
-            var nHeroes = new Range(149).Named("nHeroes");
 
             #endregion
 
@@ -78,55 +76,15 @@ namespace GGScore
 
             #region Stats
 
-            var gaussianStatParamsPriors = Variable.Array(Variable.Array(Variable.Array<Gaussian>(nParamsPerStat), nStats), nHeroes);
-            var gaussianStatParams = Variable.Array(Variable.Array(Variable.Array<double>(nParamsPerStat), nStats), nHeroes);
-
-            var gammaStatParamsPriors = Variable.Array(Variable.Array<Gamma>(nStats), nHeroes);
-            var gammaStatParams = Variable.Array(Variable.Array<double>(nStats), nHeroes);
-
-            using (Variable.ForEach(nHeroes))
-            {
-                using (var statBlock = Variable.ForEach(nStats))
-                {
-                    using (var paramBlock = Variable.ForEach(nParamsPerStat))
-                    {
-                        // If stat positively correlates with performance, e.g.: Kills, Assists, Level
-                        using (Variable.If(statBlock.Index != 1))
-                        {
-                            using (Variable.Case(paramBlock.Index, 0))
-                            {
-                                gaussianStatParamsPriors[nHeroes][statBlock.Index][paramBlock.Index] = Variable.Observed(Gaussian.FromMeanAndVariance(1, 100 * 100));
-                            }
-
-                            using (Variable.Case(paramBlock.Index, 1))
-                            {
-                                gaussianStatParamsPriors[nHeroes][statBlock.Index][paramBlock.Index] = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 100 * 100));
-                            }
-                        }
-
-                        // If stat negatively correlates with performance, e.g.: Deaths
-                        using (Variable.If(statBlock.Index == 1))
-                        {
-                            using (Variable.Case(paramBlock.Index, 0))
-                            {
-                                gaussianStatParamsPriors[nHeroes][statBlock.Index][paramBlock.Index] = Variable.Observed(Gaussian.FromMeanAndVariance(-1, 100 * 100));
-                            }
-
-                            using (Variable.Case(paramBlock.Index, 1))
-                            {
-                                gaussianStatParamsPriors[nHeroes][statBlock.Index][paramBlock.Index] = Variable.Observed(Gaussian.FromMeanAndVariance(1, 100 * 100));
-                            }
-                        }
-
-                        gaussianStatParams[nHeroes][statBlock.Index][paramBlock.Index] = Variable<double>.Random(gaussianStatParamsPriors[nHeroes][statBlock.Index][paramBlock.Index]);
-                    }
-                }
-            }
-
+            var gaussianStatParamsPriors = Variable.Array(Variable.Array<Gaussian>(nParamsPerStat), nStats);
+            var gaussianStatParams = Variable.Array(Variable.Array<double>(nParamsPerStat), nStats);
+            gaussianStatParams[nStats][nParamsPerStat] = Variable<double>.Random(gaussianStatParamsPriors[nStats][nParamsPerStat]);
             gaussianStatParams.AddAttribute(new PointEstimate());
-
-            gammaStatParamsPriors[nHeroes][nStats].SetTo(Variable.Observed(Gamma.FromMeanAndVariance(1, 100 * 100)));
-            gammaStatParams[nHeroes][nStats].SetTo(Variable<double>.Random(gammaStatParamsPriors[nHeroes][nStats]));
+            
+            
+            var gammaStatParamsPriors = Variable.Array<Gamma>(nStats);
+            var gammaStatParams = Variable.Array<double>(nStats);
+            gammaStatParams[nStats] = Variable<double>.Random(gammaStatParamsPriors[nStats]);
             gammaStatParams.AddAttribute(new PointEstimate());
 
             #endregion
@@ -135,12 +93,6 @@ namespace GGScore
 
             // Array to hold the player lookup table. Let's us know which players played in which match
             var matches = Variable.Array(Variable.Array(Variable.Array<int>(nPlayersPerTeam), nTeamsPerMatch), nMatches).Named("matches");
-
-            // Array to hold the hero lookup table. Let's us know which hero was played by each player in each match
-            var heroesPlayed = Variable.Array(Variable.Array(Variable.Array<int>(nPlayersPerTeam), nTeamsPerMatch), nMatches).Named("heroesPlayed");
-
-            // Array that let's us know whether hero information is available or not
-            var isHeroMissing = Variable.Array(Variable.Array(Variable.Array<bool>(nPlayersPerTeam), nTeamsPerMatch), nMatches).Named("isHeroMissing");
 
             #endregion
 
@@ -244,7 +196,6 @@ namespace GGScore
                     }
                 }
             }
-            
 
 
             using (Variable.ForEach(nMatches))
@@ -283,17 +234,13 @@ namespace GGScore
                             opponentTeamIndex.ObservedValue = 0;
                         }
 
-                        using (Variable.IfNot(isHeroMissing[nMatches][nTeamsPerMatch][nPlayersPerTeam]))
+                        using (Variable.ForEach(nStats))
                         {
-                            var heroId = heroesPlayed[nMatches][nTeamsPerMatch][nPlayersPerTeam];
-                            using (Variable.ForEach(nStats))
+                            using (Variable.IfNot(isStatMissing[nMatches][nTeamsPerMatch][nPlayersPerTeam][nStats]))
                             {
-                                using (Variable.IfNot(isStatMissing[nMatches][nTeamsPerMatch][nPlayersPerTeam][nStats]))
-                                {
-                                    stats[nMatches][nTeamsPerMatch][nPlayersPerTeam][nStats] = Variable.Max(0,
-                                        Variable.GaussianFromMeanAndPrecision((gaussianStatParams[heroId][nStats][0] * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] + gaussianStatParams[heroId][nStats][1] * (teamPerformance[opponentTeamIndex] / 5)) * matchLengths[nMatches],
-                                            gammaStatParams[heroId][nStats] / matchLengths[nMatches]));
-                                }
+                                stats[nMatches][nTeamsPerMatch][nPlayersPerTeam][nStats] = Variable.Max(0,
+                                    Variable.GaussianFromMeanAndPrecision((gaussianStatParams[nStats][0] * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] + gaussianStatParams[nStats][1] * (teamPerformance[opponentTeamIndex] / 5)) * matchLengths[nMatches],
+                                        gammaStatParams[nStats] / matchLengths[nMatches]));
                             }
                         }
                     }
@@ -336,12 +283,6 @@ namespace GGScore
 
             // holds the indices of each player in each match w.r.t. the priors array
             var batchMatches = new int[batchSize][][];
-
-            // hold the hero ids played by each player in each match
-            var batchHeroesPlayed = new int[batchSize][][];
-
-            // hold whether the hero id is missing in a match for a particular player
-            var batchIsHeroMissing = new bool[batchSize][][];
 
             // holds the amount of time that has passed for the m-th player in n-th match since the last time that player has played, index order of this array is [n][m] / [match][player]  
             var batchPlayerTimeLapse = new List<List<double>>();
@@ -445,16 +386,10 @@ namespace GGScore
                 var statsPerTeam = new double[2][][];
                 var statsMissing = new bool [2][][];
 
-                var heroesPerTeam = new int[2][];
-                var heroesPerTeamMissing = new bool[2][];
-
                 for (var teamIndex = 0; teamIndex < 2; ++teamIndex)
                 {
                     var playerStats = new double[5][];
                     var playerStatsMissing = new bool[5][];
-
-                    var heroesPerPlayer = new int[5];
-                    var heroesPerPlayerMissing = new bool[5];
 
                     for (var playerIndex = 0; playerIndex < 5; ++playerIndex)
                     {
@@ -462,34 +397,25 @@ namespace GGScore
                         {
                             playerStats[playerIndex] = match.PlayerStats[teams[teamIndex][playerIndex]].Stats.Select(x => Validate(x)).ToArray();
                             playerStatsMissing[playerIndex] = match.PlayerStats[teams[teamIndex][playerIndex]].Stats.Select(x => IsValueMissing(x)).ToArray();
-
-                            heroesPerPlayer[playerIndex] = match.PlayerStats[teams[teamIndex][playerIndex]].HeroId.Value;
-                            heroesPerPlayerMissing[playerIndex] = false;
                         }
                         else
                         {
                             playerStats[playerIndex] = new double[numberOfStats];
                             playerStatsMissing[playerIndex] = Enumerable.Repeat(true, numberOfStats).ToArray();
-
-                            heroesPerPlayer[playerIndex] = 0;
-                            heroesPerPlayerMissing[playerIndex] = true;
                         }
                     }
 
                     statsPerTeam[teamIndex] = playerStats;
                     statsMissing[teamIndex] = playerStatsMissing;
-
-                    heroesPerTeam[teamIndex] = heroesPerPlayer;
-                    heroesPerTeamMissing[teamIndex] = heroesPerPlayerMissing;
                 }
 
                 batchStats[matchIndex] = statsPerTeam;
                 batchStatMissing[matchIndex] = statsMissing;
-
-                batchHeroesPlayed[matchIndex] = heroesPerTeam;
-                batchIsHeroMissing[matchIndex] = heroesPerTeamMissing;
             }
 
+            var batchGaussianStatParamsPriors = statPriors.Select(x => new [] {Gaussian.FromMeanAndVariance(x["w_p"][0], x["w_p"][1]), Gaussian.FromMeanAndVariance(x["w_o"][0], x["w_o"][1])}).ToArray();
+            var batchGammaStatParamsPriors = statPriors.Select(x => Gamma.FromShapeAndRate(x["v"][0], x["v"][1])).ToArray();
+            
             Console.WriteLine("Batch is ready to be processed.");
 
             // process this batch with TS2
@@ -505,9 +431,8 @@ namespace GGScore
 
             stats.ObservedValue = batchStats;
             isStatMissing.ObservedValue = batchStatMissing;
-
-            heroesPlayed.ObservedValue = batchHeroesPlayed;
-            isHeroMissing.ObservedValue = batchIsHeroMissing;
+            gaussianStatParamsPriors.ObservedValue = batchGaussianStatParamsPriors;
+            gammaStatParamsPriors.ObservedValue = batchGammaStatParamsPriors;
 
             #endregion
 
