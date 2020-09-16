@@ -30,7 +30,7 @@ namespace GGScore
             
             var rawMatches = Utils.ReadMatchesFromFile<Match>(Path.Join(inputFileDir, $"abios_{gameName}_matches_with_stats.json")).Where(x => !excludedMatchIds.Contains(x.Id)).OrderBy(x => x.Date).ThenBy(x => x.Id).ToArray();
             var players = JsonConvert.DeserializeObject<Dictionary<int, string>>(File.ReadAllText(Path.Join(inputFileDir, $"abios_{gameName}_player_names.json")));
-            var playerTiers = JsonConvert.DeserializeObject<Dictionary<int, double>>(File.ReadAllText(Path.Join(inputFileDir, $"abios_{gameName}_player_tiers.json")));
+            var playerPriors = JsonConvert.DeserializeObject<Dictionary<int, double[]>>(File.ReadAllText(Path.Join(inputFileDir, $"abios_{gameName}_player_priors.json")));
 
             Console.WriteLine("Done.");
 
@@ -256,8 +256,7 @@ namespace GGScore
                     // if this is the first time that we've ever seen this player, initialize his/her global skill with the prior
                     if (!playerSkill.ContainsKey(player))
                     {
-                        var playerTier = playerTiers[player];
-                        playerSkill[player] = Gaussian.FromMeanAndVariance(skillMean - (playerTier - 1) * skillDeviation, Math.Pow(skillDeviation, 2));
+                        playerSkill[player] = Gaussian.FromMeanAndVariance(playerPriors[player][0], playerPriors[player][1]);
                         globalPlayerLastPlayed[player] = match.Date;
                     }
 
@@ -379,7 +378,7 @@ namespace GGScore
 
             outputFileContent.AppendLine("\n");
             Console.WriteLine("\n");
-            object[] columns = {"Rank", "Name", "AbiosId", "Tier", "Mean", "Uncertainty", "Last played"};
+            object[] columns = {"Rank", "Name", "AbiosId", "Prior (mu, sigma)", "Mean", "Uncertainty", "Last played"};
             Console.WriteLine("{0,5} | {1, -13} ({2}) | {3, 4} | {4, 5} | {5} | {6, 13}", columns);
             Console.WriteLine(new string('-', 80));
             outputFileContent.AppendLine(string.Join(';', columns));
@@ -388,8 +387,8 @@ namespace GGScore
             foreach (var (key, value) in playerSkill.OrderByDescending(OrderingFunc))
             {
                 var playerLapse = lastGlobalMatchDate - globalPlayerLastPlayed[key];
-                object[] row = {playerRank, players[key], key, playerTiers[key], value.GetMean(), Math.Sqrt(value.GetVariance()), playerLapse.Days};
-                if (playerRank <= outputLimit) Console.WriteLine("{0, 5}   {1, -15} ({2,5})  {3, 6:0}   {4, 4:F0}  {5,10:F}  {6, 7} days ago", row);
+                object[] row = {playerRank, players[key], key, $"{playerPriors[key][0]}, {Math.Sqrt(playerPriors[key][1]):F0}", value.GetMean(), Math.Sqrt(value.GetVariance()), playerLapse.Days};
+                if (playerRank <= outputLimit) Console.WriteLine("{0, 5}   {1, -15} ({2,5})  {3, 18:0}   {4, 5:F0}  {5,10:F}  {6, 7} days ago", row);
                 outputFileContent.AppendLine(string.Join(';', row));
                 playerRank++;
             }
