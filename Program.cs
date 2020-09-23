@@ -64,6 +64,12 @@ namespace GGScore
         
         [Option('p', "priors", Default = "forward", HelpText = "Directionality of the Markov-chain. Forward is priors first, then chain. Backward is chain then priors. Valid options= [forward|backward]")]
         public string PriorDirectionality { get; set; }
+        
+        [Option("offset", Default = 0, HelpText = "Skill offset for biased random walk for skills over time.")]
+        public double Offset { get; set; }
+        
+        [Option("gracePeriod", Default = 45, HelpText = "Number of days before a player starts to decay.")]
+        public double GracePeriod { get; set; }
     }
 
     internal static class Program
@@ -93,7 +99,9 @@ namespace GGScore
                 $"Input directory: {Path.GetFullPath(options.InputDir)}",
                 $"Output directory: {Path.GetFullPath(options.OutputDir)}",
                 $"Output limit: {options.Limit}",
-                $"Markov-chain prior directionality: {options.PriorDirectionality}"
+                $"Markov-chain prior directionality: {options.PriorDirectionality}",
+                $"Skill offset: {options.Offset}",
+                $"Grace period: {options.GracePeriod}"
             };
             
             Console.WriteLine("Using the following parameters:");
@@ -117,7 +125,9 @@ namespace GGScore
                 options.Limit,
                 parameterMessages,
                 options.History,
-                reversePriors);
+                reversePriors,
+                options.Offset,
+                options.GracePeriod);
         }
     }
 }
