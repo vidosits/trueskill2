@@ -16,13 +16,13 @@ namespace GGScore
 {
     public static class GGScore
     {
-        private static Gaussian Decay(Gaussian rating, int timeLapse)
+        private static Gaussian Decay(Gaussian rating, int timeLapse, double gracePeriod)
         {
-            return Gaussian.FromMeanAndVariance(Math.Max(rating.GetMean() - 3 * timeLapse, 1250), rating.GetVariance());
+            return Gaussian.FromMeanAndVariance(rating.GetMean() - 3 * Math.Max(timeLapse - gracePeriod, 0), rating.GetVariance());
         }
 
         public static void Infer(double skillMean, double skillDeviation, Gamma skillClassWidthPrior, Gamma skillDynamicsPrior, Gamma skillSharpnessDecreasePrior, double skillDamping, int numberOfIterations, string gameName, int[] excludedMatchIds, string inputFileDir,
-            string outputFileDir, int outputLimit, string[] parameterMessages, bool history, bool reversePriors)
+            string outputFileDir, int outputLimit, string[] parameterMessages, bool history, bool reversePriors, double offset, double gracePeriod)
         {
             var watch = System.Diagnostics.Stopwatch.StartNew();
 
@@ -45,6 +45,7 @@ namespace GGScore
 
             var batchLength = Variable.New<int>();
             var numOfPlayers = Variable.New<int>();
+            var skillOffset = Variable.Observed(offset);
 
             #endregion
 
@@ -172,7 +173,7 @@ namespace GGScore
 
                         using (Variable.IfNot(baseCase))
                         {
-                            skills[nPlayers][matchBlock.Index] = Variable.GaussianFromMeanAndPrecision(Variable.GaussianFromMeanAndPrecision(skills[nPlayers][matchBlock.Index + 1], skillSharpnessDecrease / playerTimeLapse[nPlayers][matchBlock.Index + 1]), skillDynamics);
+                            skills[nPlayers][matchBlock.Index] = Variable.GaussianFromMeanAndPrecision(Variable.GaussianFromMeanAndPrecision(skills[nPlayers][matchBlock.Index + 1], skillSharpnessDecrease / playerTimeLapse[nPlayers][matchBlock.Index + 1]) - skillOffset, skillDynamics);
                         }
                     }
                 }
@@ -191,7 +192,7 @@ namespace GGScore
 
                         using (Variable.If(matchBlock.Index > 0))
                         {
-                            skills[nPlayers][matchBlock.Index] = Variable.GaussianFromMeanAndPrecision(Variable.GaussianFromMeanAndPrecision(skills[nPlayers][matchBlock.Index - 1], skillSharpnessDecrease / playerTimeLapse[nPlayers][matchBlock.Index]), skillDynamics);
+                            skills[nPlayers][matchBlock.Index] = Variable.GaussianFromMeanAndPrecision(Variable.GaussianFromMeanAndPrecision(skills[nPlayers][matchBlock.Index - 1], skillSharpnessDecrease / playerTimeLapse[nPlayers][matchBlock.Index]) + skillOffset, skillDynamics);
                         }
                     }
                 }
@@ -471,7 +472,7 @@ namespace GGScore
             {
                 var playerAbiosId = batchIndexToAbiosId[i];
                 var playerLapse = lastMatchDate - globalPlayerLastPlayed[playerAbiosId];
-                playerSkill[playerAbiosId] = Decay(skillOverTime.Last(), playerLapse.Days);
+                playerSkill[playerAbiosId] = Decay(skillOverTime.Last(), playerLapse.Days, gracePeriod);
             }
 
             #endregion
