@@ -104,6 +104,9 @@ namespace GGScore
             // Array to hold the time elapsed between matches of each player used for calculating the decay of skills
             var playerTimeLapse = Variable.Array(Variable.Array<double>(matchCounts), nPlayers).Named("playerTimeElapsed");
 
+            // Array used to hold the match length information, used for calculating skill updates
+            var matchLengths = Variable.Array<double>(nMatches).Named("matchLengths");
+            
             #endregion
 
             #region Stats
@@ -289,6 +292,15 @@ namespace GGScore
 
             // holds the mapping between the batch index of a match and the j-th player's skill in that match
             var batchPlayerMatchMapping = new List<int[]>();
+            
+            // holds the length of each match in this batch
+            var batchMatchLengths = new double[batchSize];
+
+            // holds the stat counts for the l-th stat for k-th player in the j-th team in the i-th match, index order of this array is [i][j][k][l] / [match][team][player][stat]
+            var batchStats = new double[batchSize][][][];
+
+            // Indicates whether the value for the l-th stat for k-th player in the j-th team in the i-th match is missing, index order of this array is [i][j][k][l] / [match][team][player][stat]
+            var batchStatMissing = new bool[batchSize][][][];
 
             for (var matchIndex = 0; matchIndex < batchSize; ++matchIndex)
             {
@@ -403,7 +415,11 @@ namespace GGScore
             var batchGaussianStatParamsPriors = statPriors.Select(x => new [] {Gaussian.FromMeanAndVariance(x["w_p"][0], x["w_p"][1]), Gaussian.FromMeanAndVariance(x["w_o"][0], x["w_o"][1])}).ToArray();
             var batchGammaStatParamsPriors = statPriors.Select(x => Gamma.FromShapeAndRate(x["v"][0], x["v"][1])).ToArray();
             
+            #endregion
+            
             Console.WriteLine("Batch is ready to be processed.");
+            
+            
 
             // process this batch with TS2
 
@@ -414,6 +430,7 @@ namespace GGScore
 
             #endregion
 
+            #region Stats
 
             stats.ObservedValue = batchStats;
             isStatMissing.ObservedValue = batchStatMissing;
@@ -433,6 +450,7 @@ namespace GGScore
             numberOfMatchesPlayedPerPlayer.ObservedValue = batchPlayerMatchCount.ToArray();
             skillPriors.ObservedValue = batchPriors.ToArray();
             playerTimeLapse.ObservedValue = batchPlayerTimeLapse.Select(Enumerable.ToArray).ToArray();
+            matchLengths.ObservedValue = batchMatchLengths;
 
             #endregion
 
@@ -459,8 +477,6 @@ namespace GGScore
                 var playerLapse = lastMatchDate - globalPlayerLastPlayed[playerAbiosId];
                 playerSkill[playerAbiosId] = Decay(skillOverTime.Last(), playerLapse.Days, gracePeriod);
             }
-
-            #endregion
 
             var lastGlobalMatchDate = globalPlayerLastPlayed.Values.Max();
             double OrderingFunc(KeyValuePair<int, Gaussian> s) => s.Value.GetMean() - (skillMean / skillDeviation) * Math.Sqrt(s.Value.GetVariance());
