@@ -22,15 +22,19 @@ namespace GGScore
         }
 
         public static void Infer(double skillMean, double skillDeviation, Gamma skillClassWidthPrior, Gamma skillDynamicsPrior, Gamma skillSharpnessDecreasePrior, double skillDamping, int numberOfIterations, string gameName, int[] excludedMatchIds, string inputFileDir,
-            string outputFileDir, int outputLimit, string[] parameterMessages, bool history, bool reversePriors, double offset, double gracePeriod)
+            string outputFileDir, int outputLimit, string[] parameterMessages, bool history, bool reversePriors, double offset, double gracePeriod, bool statsEnabled)
         {
             var watch = System.Diagnostics.Stopwatch.StartNew();
 
             #region Parameters
-            
+
             var rawMatches = Utils.ReadMatchesFromFile<Match>(Path.Join(inputFileDir, $"abios_{gameName}_matches_with_stats.json")).Where(x => !excludedMatchIds.Contains(x.Id)).OrderBy(x => x.Date).ThenBy(x => x.Id).ToArray();
             var players = JsonConvert.DeserializeObject<Dictionary<int, string>>(File.ReadAllText(Path.Join(inputFileDir, $"abios_{gameName}_player_names.json")));
             var playerPriors = JsonConvert.DeserializeObject<Dictionary<int, double[]>>(File.ReadAllText(Path.Join(inputFileDir, $"abios_{gameName}_player_priors.json")));
+            var statPriors = JsonConvert.DeserializeObject<List<Dictionary<string, List<double>>>>(File.ReadAllText(Path.Join(inputFileDir, $"{gameName}_stat_priors.json")));
+            
+            var usingStats = Variable.Observed(statsEnabled);
+            var numberOfStats = rawMatches.First(x => x.PlayerStats != null).PlayerStats.First().Value.Stats.Length;
 
             Console.WriteLine("Done.");
 
@@ -53,6 +57,9 @@ namespace GGScore
 
             var nPlayersPerTeam = new Range(5).Named("nPlayersPerTeam");
             var nTeamsPerMatch = new Range(2).Named("nTeamsPerMatch");
+
+            var nStats = new Range(numberOfStats).Named("nStats");
+            var nParamsPerStat = new Range(2).Named("nParamsPerStat");
 
             #endregion
 
@@ -96,6 +103,24 @@ namespace GGScore
 
             // Array to hold the time elapsed between matches of each player used for calculating the decay of skills
             var playerTimeLapse = Variable.Array(Variable.Array<double>(matchCounts), nPlayers).Named("playerTimeElapsed");
+
+            #endregion
+
+            #region Stats
+
+            var gaussianStatParamsPriors = Variable.Array(Variable.Array<Gaussian>(nParamsPerStat), nStats);
+            var gaussianStatParams = Variable.Array(Variable.Array<double>(nParamsPerStat), nStats);
+            gaussianStatParams[nStats][nParamsPerStat] = Variable<double>.Random(gaussianStatParamsPriors[nStats][nParamsPerStat]);
+            gaussianStatParams.AddAttribute(new PointEstimate());
+
+            var gammaStatParamsPriors = Variable.Array<Gamma>(nStats);
+            var gammaStatParams = Variable.Array<double>(nStats);
+            gammaStatParams[nStats] = Variable<double>.Random(gammaStatParamsPriors[nStats]);
+            gammaStatParams.AddAttribute(new PointEstimate());
+
+            // Initialize arrays holding player stat(s) (e.g.: kills, deaths, etc.) information and whether they are available
+            var stats = Variable.Array(Variable.Array(Variable.Array(Variable.Array<double>(nStats), nPlayersPerTeam), nTeamsPerMatch), nMatches).Named("stats");
+            var isStatMissing = Variable.Array(Variable.Array(Variable.Array(Variable.Array<bool>(nStats), nPlayersPerTeam), nTeamsPerMatch), nMatches).Named("isStatMissing");
 
             #endregion
 
@@ -165,7 +190,6 @@ namespace GGScore
                     }
                 }
             }
-            
 
 
             using (Variable.ForEach(nMatches))
@@ -188,6 +212,36 @@ namespace GGScore
                 }
 
                 Variable.ConstrainTrue(teamPerformance[0] > teamPerformance[1]);
+
+                using (Variable.If(usingStats))
+                {
+                    using (var team = Variable.ForEach(nTeamsPerMatch))
+                    {
+                        using (Variable.ForEach(nPlayersPerTeam))
+                        {
+                            var opponentTeamIndex = Variable.New<int>();
+                            using (Variable.Case(team.Index, 0))
+                            {
+                                opponentTeamIndex.ObservedValue = 1;
+                            }
+
+                            using (Variable.Case(team.Index, 1))
+                            {
+                                opponentTeamIndex.ObservedValue = 0;
+                            }
+
+                            using (Variable.ForEach(nStats))
+                            {
+                                using (Variable.IfNot(isStatMissing[nMatches][nTeamsPerMatch][nPlayersPerTeam][nStats]))
+                                {
+                                    stats[nMatches][nTeamsPerMatch][nPlayersPerTeam][nStats] = Variable.Max(0,
+                                        Variable.GaussianFromMeanAndPrecision((gaussianStatParams[nStats][0] * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] + gaussianStatParams[nStats][1] * (teamPerformance[opponentTeamIndex] / 5)) * matchLengths[nMatches],
+                                            gammaStatParams[nStats] / matchLengths[nMatches]));
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
 
@@ -310,8 +364,45 @@ namespace GGScore
 
                 // set playerIndex
                 batchMatches[matchIndex] = teams.Select(t => t.Select(p => abiosIdToBatchIndex[p]).ToArray()).ToArray();
+
+                // set matchLength
+                batchMatchLengths[matchIndex] = match.MatchLength;
+
+                // set stats for each player in the match
+
+                var statsPerTeam = new double[2][][];
+                var statsMissing = new bool [2][][];
+
+                for (var teamIndex = 0; teamIndex < 2; ++teamIndex)
+                {
+                    var playerStats = new double[5][];
+                    var playerStatsMissing = new bool[5][];
+
+                    for (var playerIndex = 0; playerIndex < 5; ++playerIndex)
+                    {
+                        if (match.PlayerStats != null)
+                        {
+                            playerStats[playerIndex] = match.PlayerStats[teams[teamIndex][playerIndex]].Stats.Select(x => Validate(x)).ToArray();
+                            playerStatsMissing[playerIndex] = match.PlayerStats[teams[teamIndex][playerIndex]].Stats.Select(x => IsValueMissing(x)).ToArray();
+                        }
+                        else
+                        {
+                            playerStats[playerIndex] = new double[numberOfStats];
+                            playerStatsMissing[playerIndex] = Enumerable.Repeat(true, numberOfStats).ToArray();
+                        }
+                    }
+
+                    statsPerTeam[teamIndex] = playerStats;
+                    statsMissing[teamIndex] = playerStatsMissing;
+                }
+
+                batchStats[matchIndex] = statsPerTeam;
+                batchStatMissing[matchIndex] = statsMissing;
             }
 
+            var batchGaussianStatParamsPriors = statPriors.Select(x => new [] {Gaussian.FromMeanAndVariance(x["w_p"][0], x["w_p"][1]), Gaussian.FromMeanAndVariance(x["w_o"][0], x["w_o"][1])}).ToArray();
+            var batchGammaStatParamsPriors = statPriors.Select(x => Gamma.FromShapeAndRate(x["v"][0], x["v"][1])).ToArray();
+            
             Console.WriteLine("Batch is ready to be processed.");
 
             // process this batch with TS2
@@ -323,6 +414,13 @@ namespace GGScore
 
             #endregion
 
+
+            stats.ObservedValue = batchStats;
+            isStatMissing.ObservedValue = batchStatMissing;
+            gaussianStatParamsPriors.ObservedValue = batchGaussianStatParamsPriors;
+            gammaStatParamsPriors.ObservedValue = batchGammaStatParamsPriors;
+
+            #endregion
 
             #region Matches
 

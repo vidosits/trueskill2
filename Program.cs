@@ -58,25 +58,28 @@ namespace GGScore
 
         [Option('l', "limit", Default = 50, HelpText = "Number of players to output from the rankings.")]
         public int Limit { get; set; }
-        
+
         [Option('h', "history", Default = false, HelpText = "Flag indicates whether to export the skills jagged array.")]
         public bool History { get; set; }
-        
+
         [Option('p', "priors", Default = "forward", HelpText = "Directionality of the Markov-chain. Forward is priors first, then chain. Backward is chain then priors. Valid options= [forward|backward]")]
         public string PriorDirectionality { get; set; }
-        
+
         [Option("offset", Default = 0, HelpText = "Skill offset for biased random walk for skills over time.")]
         public double Offset { get; set; }
-        
+
         [Option("gracePeriod", Default = 45, HelpText = "Number of days before a player starts to decay.")]
         public double GracePeriod { get; set; }
+
+        [Option("stats", Default = false, HelpText = "Indicates whether heroless stats are enabled.")]
+        public bool StatsEnabled { get; set; }
     }
 
     internal static class Program
     {
         private static void Main(string[] args)
         {
-            Parser.Default.ParseArguments<Options>(args).WithParsed(Run);
+            new Parser(settings => settings.CaseInsensitiveEnumValues = true).ParseArguments<Options>(args).WithParsed(Run);
         }
 
         private static void Run(Options options)
@@ -85,7 +88,7 @@ namespace GGScore
             var g = Gamma.FromShapeAndRate(options.GammaShape, Math.Pow(options.GammaRate, 2));
             var t = Gamma.FromShapeAndRate(options.TauShape, Math.Pow(options.TauRate, 2));
             var reversePriors = options.PriorDirectionality == "backward";
-            
+
             var parameterMessages = new[]
             {
                 $"Skill prior: Gaussian({options.Mean}, {options.Std}^2)",
@@ -101,15 +104,17 @@ namespace GGScore
                 $"Output limit: {options.Limit}",
                 $"Markov-chain prior directionality: {options.PriorDirectionality}",
                 $"Skill offset: {options.Offset}",
-                $"Grace period: {options.GracePeriod}"
+                $"Grace period: {options.GracePeriod}",
+                $"Stats: {options.StatsEnabled}"
             };
-            
+
             Console.WriteLine("Using the following parameters:");
             Console.WriteLine();
             foreach (var message in parameterMessages)
             {
                 Console.WriteLine(message);
             }
+
             Console.WriteLine();
             GGScore.Infer(options.Mean,
                 options.Std,
@@ -127,7 +132,8 @@ namespace GGScore
                 options.History,
                 reversePriors,
                 options.Offset,
-                options.GracePeriod);
+                options.GracePeriod,
+                options.StatsEnabled);
         }
     }
 }
