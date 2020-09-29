@@ -79,7 +79,7 @@ namespace GGScore
     {
         private static void Main(string[] args)
         {
-            new Parser(settings => settings.CaseInsensitiveEnumValues = true).ParseArguments<Options>(args).WithParsed(Run);
+            Parser.Default.ParseArguments<Options>(args).WithParsed(Run);
         }
 
         private static void Run(Options options)
