@@ -19,7 +19,7 @@ namespace GGScore
         private static Gaussian Decay(Gaussian rating, int timeLapse, double gracePeriod)
         {
             // return Gaussian.FromMeanAndVariance(rating.GetMean() - 3 * Math.Max(timeLapse - gracePeriod, 0), rating.GetVariance());
-            return Gaussian.FromMeanAndVariance(rating.GetMean(), + Math.Pow(Math.Sqrt(rating.GetVariance()) + Math.Max(timeLapse - gracePeriod, 0), 2));
+            return Gaussian.FromMeanAndVariance(rating.GetMean(), +Math.Pow(Math.Sqrt(rating.GetVariance()) + Math.Max(timeLapse - gracePeriod, 0), 2));
         }
 
         public static void Infer(double skillMean, double skillDeviation, Gamma skillClassWidthPrior, Gamma skillDynamicsPrior, Gamma skillSharpnessDecreasePrior, double skillDamping, int numberOfIterations, string gameName, int[] excludedMatchIds, string inputFileDir,
@@ -33,9 +33,9 @@ namespace GGScore
             var players = JsonConvert.DeserializeObject<Dictionary<int, string>>(File.ReadAllText(Path.Join(inputFileDir, $"abios_{gameName}_player_names.json")));
             var playerPriors = JsonConvert.DeserializeObject<Dictionary<int, double[]>>(File.ReadAllText(Path.Join(inputFileDir, $"abios_{gameName}_player_priors.json")));
             var statPriors = JsonConvert.DeserializeObject<List<Dictionary<string, List<double>>>>(File.ReadAllText(Path.Join(inputFileDir, $"{gameName}_stat_priors.json")));
-            
+
             var usingStats = Variable.Observed(statsEnabled);
-            
+
             var numberOfStats = statPriors.Count;
 
             Console.WriteLine("Done.");
@@ -108,7 +108,7 @@ namespace GGScore
 
             // Array used to hold the match length information, used for calculating skill updates
             var matchLengths = Variable.Array<double>(nMatches).Named("matchLengths");
-            
+
             #endregion
 
             #region Stats
@@ -153,7 +153,7 @@ namespace GGScore
             var playerMatchMapping = Variable.Array(Variable.Array<int>(nMatches), nPlayers).Named("playerMatchMapping");
 
             #endregion
-            
+
             // Initialize skills variable array
 
             using (Variable.If(reversePriorChain))
@@ -294,7 +294,7 @@ namespace GGScore
 
             // holds the mapping between the batch index of a match and the j-th player's skill in that match
             var batchPlayerMatchMapping = new List<int[]>();
-            
+
             // holds the length of each match in this batch
             var batchMatchLengths = new double[batchSize];
 
@@ -306,122 +306,129 @@ namespace GGScore
 
             for (var matchIndex = 0; matchIndex < batchSize; ++matchIndex)
             {
-                var match = rawMatches[matchIndex];
-                var winnerId = match.Winner;
-                var loserId = -1;
                 try
                 {
-                    loserId = match.Rosters.Single(x => x.Key != winnerId).Key;
-                }
-                catch (InvalidOperationException)
-                {
-                    Console.WriteLine($"error in match: {match.Id}. WinnerId {winnerId} not in rosters.");
-                }
-
-
-                var teams = new[] {match.Rosters[winnerId].ToArray(), match.Rosters[loserId].ToArray()};
-                foreach (var player in teams.SelectMany(x => x))
-                {
-                    // if this is the first time that we've ever seen this player, initialize his/her global skill with the prior
-                    if (!playerSkill.ContainsKey(player))
+                    var match = rawMatches[matchIndex];
+                    var winnerId = match.Winner;
+                    var loserId = -1;
+                    try
                     {
-                        playerSkill[player] = Gaussian.FromMeanAndVariance(playerPriors[player][0], playerPriors[player][1]);
-                        globalPlayerLastPlayed[player] = match.Date;
+                        loserId = match.Rosters.Single(x => x.Key != winnerId).Key;
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        Console.WriteLine($"error in match: {match.Id}. WinnerId {winnerId} not in rosters.");
                     }
 
-                    int pIndex;
 
-                    // check if this player has not already appeared in this batch 
-                    if (!abiosIdToBatchIndex.ContainsKey(player))
+                    var teams = new[] {match.Rosters[winnerId].ToArray(), match.Rosters[loserId].ToArray()};
+                    foreach (var player in teams.SelectMany(x => x))
                     {
-                        // set the index that the player will receive
-                        abiosIdToBatchIndex[player] = batchPriors.Count;
-                        batchIndexToAbiosId[batchPriors.Count] = player;
-                        pIndex = batchPriors.Count;
-
-                        // init player prior from global skill tracker
-                        batchPriors.Add(playerSkill[player]);
-
-                        // init the number of matches played in current batch
-                        batchPlayerMatchCount.Add(1);
-
-                        // set the time elapsed since the last time this player has played
-                        batchPlayerTimeLapse.Add(new List<double> {(match.Date - globalPlayerLastPlayed[player]).Days});
-
-                        // set up the array that will hold the mapping between the i-th match and the players' matches
-                        batchPlayerMatchMapping.Add(new int[batchSize]);
-                    }
-                    else
-                    {
-                        // get the index of this player
-                        pIndex = abiosIdToBatchIndex[player];
-
-                        // increase the number of matches played in the current batch by the current player
-                        batchPlayerMatchCount[pIndex] += 1;
-
-                        // update batchPlayerTimeLapse, so that we can tell how much time has passed (in days) since the last time this player has played
-                        var lapse = (match.Date - globalPlayerLastPlayed[player]).Days;
-                        if (lapse < 0)
+                        // if this is the first time that we've ever seen this player, initialize his/her global skill with the prior
+                        if (!playerSkill.ContainsKey(player))
                         {
-                            Console.WriteLine("what");
+                            playerSkill[player] = Gaussian.FromMeanAndVariance(playerPriors[player][0], playerPriors[player][1]);
+                            globalPlayerLastPlayed[player] = match.Date;
                         }
 
-                        batchPlayerTimeLapse[pIndex].Add((match.Date - globalPlayerLastPlayed[player]).Days);
-                    }
+                        int pIndex;
 
-                    // set up the mapping between the match index and the player's matches 
-                    batchPlayerMatchMapping[pIndex][matchIndex] = batchPlayerMatchCount[pIndex] - 1;
-
-                    // update the date of the last played match for the player
-                    globalPlayerLastPlayed[player] = match.Date;
-                }
-
-                // set playerIndex
-                batchMatches[matchIndex] = teams.Select(t => t.Select(p => abiosIdToBatchIndex[p]).ToArray()).ToArray();
-
-                // set matchLength
-                batchMatchLengths[matchIndex] = match.MatchLength;
-
-                // set stats for each player in the match
-
-                var statsPerTeam = new double[2][][];
-                var statsMissing = new bool [2][][];
-
-                for (var teamIndex = 0; teamIndex < 2; ++teamIndex)
-                {
-                    var playerStats = new double[5][];
-                    var playerStatsMissing = new bool[5][];
-
-                    for (var playerIndex = 0; playerIndex < 5; ++playerIndex)
-                    {
-                        if (match.PlayerStats != null)
+                        // check if this player has not already appeared in this batch 
+                        if (!abiosIdToBatchIndex.ContainsKey(player))
                         {
-                            playerStats[playerIndex] = match.PlayerStats[teams[teamIndex][playerIndex]].Stats.Select(x => Validate(x)).ToArray();
-                            playerStatsMissing[playerIndex] = match.PlayerStats[teams[teamIndex][playerIndex]].Stats.Select(x => IsValueMissing(x)).ToArray();
+                            // set the index that the player will receive
+                            abiosIdToBatchIndex[player] = batchPriors.Count;
+                            batchIndexToAbiosId[batchPriors.Count] = player;
+                            pIndex = batchPriors.Count;
+
+                            // init player prior from global skill tracker
+                            batchPriors.Add(playerSkill[player]);
+
+                            // init the number of matches played in current batch
+                            batchPlayerMatchCount.Add(1);
+
+                            // set the time elapsed since the last time this player has played
+                            batchPlayerTimeLapse.Add(new List<double> {(match.Date - globalPlayerLastPlayed[player]).Days});
+
+                            // set up the array that will hold the mapping between the i-th match and the players' matches
+                            batchPlayerMatchMapping.Add(new int[batchSize]);
                         }
                         else
                         {
-                            playerStats[playerIndex] = new double[numberOfStats];
-                            playerStatsMissing[playerIndex] = Enumerable.Repeat(true, numberOfStats).ToArray();
+                            // get the index of this player
+                            pIndex = abiosIdToBatchIndex[player];
+
+                            // increase the number of matches played in the current batch by the current player
+                            batchPlayerMatchCount[pIndex] += 1;
+
+                            // update batchPlayerTimeLapse, so that we can tell how much time has passed (in days) since the last time this player has played
+                            var lapse = (match.Date - globalPlayerLastPlayed[player]).Days;
+                            if (lapse < 0)
+                            {
+                                Console.WriteLine("what");
+                            }
+
+                            batchPlayerTimeLapse[pIndex].Add((match.Date - globalPlayerLastPlayed[player]).Days);
                         }
+
+                        // set up the mapping between the match index and the player's matches 
+                        batchPlayerMatchMapping[pIndex][matchIndex] = batchPlayerMatchCount[pIndex] - 1;
+
+                        // update the date of the last played match for the player
+                        globalPlayerLastPlayed[player] = match.Date;
                     }
 
-                    statsPerTeam[teamIndex] = playerStats;
-                    statsMissing[teamIndex] = playerStatsMissing;
-                }
+                    // set playerIndex
+                    batchMatches[matchIndex] = teams.Select(t => t.Select(p => abiosIdToBatchIndex[p]).ToArray()).ToArray();
 
-                batchStats[matchIndex] = statsPerTeam;
-                batchStatMissing[matchIndex] = statsMissing;
+                    // set matchLength
+                    batchMatchLengths[matchIndex] = match.MatchLength;
+
+                    // set stats for each player in the match
+
+                    var statsPerTeam = new double[2][][];
+                    var statsMissing = new bool [2][][];
+
+                    for (var teamIndex = 0; teamIndex < 2; ++teamIndex)
+                    {
+                        var playerStats = new double[5][];
+                        var playerStatsMissing = new bool[5][];
+
+                        for (var playerIndex = 0; playerIndex < 5; ++playerIndex)
+                        {
+                            if (match.PlayerStats != null)
+                            {
+                                playerStats[playerIndex] = match.PlayerStats[teams[teamIndex][playerIndex]].Stats.Select(x => Validate(x)).ToArray();
+                                playerStatsMissing[playerIndex] = match.PlayerStats[teams[teamIndex][playerIndex]].Stats.Select(x => IsValueMissing(x)).ToArray();
+                            }
+                            else
+                            {
+                                playerStats[playerIndex] = new double[numberOfStats];
+                                playerStatsMissing[playerIndex] = Enumerable.Repeat(true, numberOfStats).ToArray();
+                            }
+                        }
+
+                        statsPerTeam[teamIndex] = playerStats;
+                        statsMissing[teamIndex] = playerStatsMissing;
+                    }
+
+                    batchStats[matchIndex] = statsPerTeam;
+                    batchStatMissing[matchIndex] = statsMissing;
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine($"Error in match: {rawMatches[matchIndex].Id}");
+                    throw;
+                }
             }
 
-            var batchGaussianStatParamsPriors = statPriors.Select(x => new [] {Gaussian.FromMeanAndVariance(x["w_p"][0], x["w_p"][1]), Gaussian.FromMeanAndVariance(x["w_o"][0], x["w_o"][1])}).ToArray();
+            var batchGaussianStatParamsPriors = statPriors.Select(x => new[] {Gaussian.FromMeanAndVariance(x["w_p"][0], x["w_p"][1]), Gaussian.FromMeanAndVariance(x["w_o"][0], x["w_o"][1])}).ToArray();
             var batchGammaStatParamsPriors = statPriors.Select(x => Gamma.FromShapeAndRate(x["v"][0], x["v"][1])).ToArray();
-            
+
             #endregion
-            
+
             Console.WriteLine("Batch is ready to be processed.");
-            
-            
+
 
             // process this batch with TS2
 
