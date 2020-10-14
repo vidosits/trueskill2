@@ -18,7 +18,8 @@ namespace GGScore
     {
         private static Gaussian Decay(Gaussian rating, int timeLapse, double gracePeriod)
         {
-            return Gaussian.FromMeanAndVariance(rating.GetMean() - 3 * Math.Max(timeLapse - gracePeriod, 0), rating.GetVariance());
+            // return Gaussian.FromMeanAndVariance(rating.GetMean() - 3 * Math.Max(timeLapse - gracePeriod, 0), rating.GetVariance());
+            return Gaussian.FromMeanAndVariance(rating.GetMean(), + Math.Pow(Math.Sqrt(rating.GetVariance()) + Math.Max(timeLapse - gracePeriod, 0), 2));
         }
 
         public static void Infer(double skillMean, double skillDeviation, Gamma skillClassWidthPrior, Gamma skillDynamicsPrior, Gamma skillSharpnessDecreasePrior, double skillDamping, int numberOfIterations, string gameName, int[] excludedMatchIds, string inputFileDir,
@@ -34,7 +35,8 @@ namespace GGScore
             var statPriors = JsonConvert.DeserializeObject<List<Dictionary<string, List<double>>>>(File.ReadAllText(Path.Join(inputFileDir, $"{gameName}_stat_priors.json")));
             
             var usingStats = Variable.Observed(statsEnabled);
-            var numberOfStats = rawMatches.First(x => x.PlayerStats != null).PlayerStats.First().Value.Stats.Length;
+            
+            var numberOfStats = statPriors.Count;
 
             Console.WriteLine("Done.");
 
