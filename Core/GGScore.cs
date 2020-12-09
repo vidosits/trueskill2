@@ -16,43 +16,97 @@ namespace GGScore
 {
     public static class GGScore
     {
-        private static Gaussian Decay(Gaussian rating, int timeLapse, double gracePeriod)
+        private static Gaussian Decay(Gaussian rating, int timeLapse, double gracePeriod, Gamma skillSharpnessDecreasePosterior)
         {
-            // return Gaussian.FromMeanAndVariance(rating.GetMean() - 3 * Math.Max(timeLapse - gracePeriod, 0), rating.GetVariance());
-            return Gaussian.FromMeanAndVariance(rating.GetMean(), +Math.Pow(Math.Sqrt(rating.GetVariance()) + Math.Max(timeLapse - gracePeriod, 0), 2));
+            return Gaussian.FromMeanAndVariance(rating.GetMean(), rating.GetVariance() + Math.Max(timeLapse - gracePeriod, 0) / skillSharpnessDecreasePosterior.Point);
         }
 
-        public static void Infer(double skillMean, double skillDeviation, Gamma skillClassWidthPrior, Gamma skillDynamicsPrior, Gamma skillSharpnessDecreasePrior, double skillDamping, int numberOfIterations, string gameName, int[] excludedMatchIds, string inputFileDir,
-            string outputFileDir, int outputLimit, string[] parameterMessages, bool history, bool reversePriors, double offset, double gracePeriod, bool statsEnabled)
+        public static void RunFiles(double skillMean, double skillDeviation, Gamma skillClassWidthPrior,
+            Gamma skillDynamicsPrior,
+            Gamma skillSharpnessDecreasePrior, double skillDamping, int numberOfIterations, string gameName, int[] excludedMatchIds, string inputFileDir, string outputFileDir, int outputLimit,
+            string[] parameterMessages, bool history, bool reversePriors, double skillOffset, double gracePeriod)
         {
-            var watch = System.Diagnostics.Stopwatch.StartNew();
-
-            #region Parameters
-
             var rawMatches = Utils.ReadMatchesFromFile<Match>(Path.Join(inputFileDir, $"abios_{gameName}_matches_with_stats.json")).Where(x => !excludedMatchIds.Contains(x.Id)).OrderBy(x => x.Date).ThenBy(x => x.Id).ToArray();
             var players = JsonConvert.DeserializeObject<Dictionary<int, string>>(File.ReadAllText(Path.Join(inputFileDir, $"abios_{gameName}_player_names.json")));
             var playerPriors = JsonConvert.DeserializeObject<Dictionary<int, double[]>>(File.ReadAllText(Path.Join(inputFileDir, $"abios_{gameName}_player_priors.json")));
-            var statPriors = JsonConvert.DeserializeObject<List<Dictionary<string, List<double>>>>(File.ReadAllText(Path.Join(inputFileDir, $"{gameName}_stat_priors.json")));
+            
+            var watch = System.Diagnostics.Stopwatch.StartNew();
 
-            var usingStats = Variable.Observed(statsEnabled);
+            var (playerSkill, inferredSkills, posteriors, globalPlayerLastPlayed, lastGlobalMatchDate, batchIndexToAbiosId) = Infer(rawMatches, playerPriors, skillClassWidthPrior, skillDynamicsPrior, skillSharpnessDecreasePrior, skillDamping, numberOfIterations, reversePriors, skillOffset, gracePeriod);
+            
+            watch.Stop();
+            Console.WriteLine($"Inference took {watch.Elapsed.TotalMinutes:F} minutes.");
 
-            var numberOfStats = statPriors.Count;
+            double OrderingFunc(KeyValuePair<int, Gaussian> s) => s.Value.GetMean() - (skillMean / skillDeviation) * Math.Sqrt(s.Value.GetVariance());
+            var outputFileName = $"{gameName}_{DateTime.Now:yyyyMMddTHHmmss}";
+            var outputFileContent = new StringBuilder();
+            foreach (var message in parameterMessages) outputFileContent.AppendLine($";{message}");
+            outputFileContent.AppendLine($"\n;Last match date: {lastGlobalMatchDate}");
+            outputFileContent.AppendLine($"\n;Inference took {watch.Elapsed.TotalMinutes:F} minutes.\n");
+            foreach (var (key, posterior) in posteriors)
+            {
+                outputFileContent.AppendLine($";{key}: {posterior}");
+                Console.WriteLine($"{key}: {posterior}");
+            }
 
-            Console.WriteLine("Done.");
+            outputFileContent.AppendLine("\n");
+            Console.WriteLine("\n");
+            object[] columns = {"Rank", "Name", "AbiosId", "Prior (mu, sigma)", "Mean", "Uncertainty", "Last played"};
+            Console.WriteLine("{0,5} | {1, -13} ({2}) | {3, 4} | {4, 5} | {5} | {6, 13}", columns);
+            Console.WriteLine(new string('-', 80));
+            outputFileContent.AppendLine(string.Join(';', columns));
+
+            var playerRank = 1;
+            foreach (var (key, value) in playerSkill.OrderByDescending(OrderingFunc))
+            {
+                var playerLapse = lastGlobalMatchDate - globalPlayerLastPlayed[key];
+                object[] row = {playerRank, players[key], key, $"{playerPriors[key][0]}, {Math.Sqrt(playerPriors[key][1]):F0}", value.GetMean(), Math.Sqrt(value.GetVariance()), playerLapse.Days};
+                if (playerRank <= outputLimit) Console.WriteLine("{0, 5}   {1, -15} ({2,5})  {3, 18:0}   {4, 5:F0}  {5,10:F}  {6, 7} days ago", row);
+                outputFileContent.AppendLine(string.Join(';', row));
+                playerRank++;
+            }
+
+            Directory.CreateDirectory(outputFileDir);
+
+            var outputFilePath = Path.Combine(outputFileDir, outputFileName + ".csv");
+            File.WriteAllText(outputFilePath, outputFileContent.ToString());
+
+            // if we export history
+            if (history)
+            {
+                File.WriteAllText(Path.Combine(outputFileDir, outputFileName + "_skills.json"), JsonConvert.SerializeObject(inferredSkills));
+                File.WriteAllText(Path.Combine(outputFileDir, outputFileName + "_id_map.json"), JsonConvert.SerializeObject(batchIndexToAbiosId));
+            }
+
+            Console.WriteLine($"Output saved to: {outputFilePath}");
+        }
+
+        public static (
+            Dictionary<int, Gaussian> playerSkill,
+            Gaussian[][] skills,
+            Dictionary<string, Gamma> posteriors,
+            Dictionary<int, DateTime> globalPlayerLastPlayed,
+            DateTime lastGlobalMatchDate,
+            Dictionary<int, int> batchIndexToAbiosId)
+            Infer(
+            Match[] rawMatches,
+            Dictionary<int, double[]> playerPriors,
+            Gamma skillClassWidthPrior,
+            Gamma skillDynamicsPrior,
+            Gamma skillSharpnessDecreasePrior,
+            double skillDamping,
+            int numberOfIterations,
+            bool reversePriors,
+            double offset,
+            double gracePeriod)
+        {
+
 
             var batchSize = rawMatches.Length;
-
-            #endregion
-
-            #region Constants
 
             var batchLength = Variable.New<int>();
             var numOfPlayers = Variable.New<int>();
             var skillOffset = Variable.Observed(offset);
-
-            #endregion
-
-            #region Ranges
 
             var nPlayers = new Range(numOfPlayers).Named("nPlayers");
             var nMatches = new Range(batchLength).Named("nMatches");
@@ -60,12 +114,6 @@ namespace GGScore
             var nPlayersPerTeam = new Range(5).Named("nPlayersPerTeam");
             var nTeamsPerMatch = new Range(2).Named("nTeamsPerMatch");
 
-            var nStats = new Range(numberOfStats).Named("nStats");
-            var nParamsPerStat = new Range(2).Named("nParamsPerStat");
-
-            #endregion
-
-            #region Parameters
 
             var skillClassWidth = Variable.Random(skillClassWidthPrior).Named("skillClassWidth"); // β
             skillClassWidth.AddAttribute(new PointEstimate());
@@ -76,16 +124,8 @@ namespace GGScore
             var skillSharpnessDecrease = Variable.Random(skillSharpnessDecreasePrior).Named("skillSharpnessDecrease"); // τ
             skillSharpnessDecrease.AddAttribute(new PointEstimate());
 
-            #endregion
-
-            #region Matches
-
             // Array to hold the player lookup table. Let's us know which players played in which match
             var matches = Variable.Array(Variable.Array(Variable.Array<int>(nPlayersPerTeam), nTeamsPerMatch), nMatches).Named("matches");
-
-            #endregion
-
-            #region Skill setup
 
             // This array is used to hold the value of the total number of matches played by the specific players in this current batch.
             // These numbers can be used to create the 2D jagged array holding the skills of the player over time.
@@ -105,29 +145,6 @@ namespace GGScore
 
             // Array to hold the time elapsed between matches of each player used for calculating the decay of skills
             var playerTimeLapse = Variable.Array(Variable.Array<double>(matchCounts), nPlayers).Named("playerTimeElapsed");
-
-            // Array used to hold the match length information, used for calculating skill updates
-            var matchLengths = Variable.Array<double>(nMatches).Named("matchLengths");
-
-            #endregion
-
-            #region Stats
-
-            var gaussianStatParamsPriors = Variable.Array(Variable.Array<Gaussian>(nParamsPerStat), nStats);
-            var gaussianStatParams = Variable.Array(Variable.Array<double>(nParamsPerStat), nStats);
-            gaussianStatParams[nStats][nParamsPerStat] = Variable<double>.Random(gaussianStatParamsPriors[nStats][nParamsPerStat]);
-            gaussianStatParams.AddAttribute(new PointEstimate());
-
-            var gammaStatParamsPriors = Variable.Array<Gamma>(nStats);
-            var gammaStatParams = Variable.Array<double>(nStats);
-            gammaStatParams[nStats] = Variable<double>.Random(gammaStatParamsPriors[nStats]);
-            gammaStatParams.AddAttribute(new PointEstimate());
-
-            // Initialize arrays holding player stat(s) (e.g.: kills, deaths, etc.) information and whether they are available
-            var stats = Variable.Array(Variable.Array(Variable.Array(Variable.Array<double>(nStats), nPlayersPerTeam), nTeamsPerMatch), nMatches).Named("stats");
-            var isStatMissing = Variable.Array(Variable.Array(Variable.Array(Variable.Array<bool>(nStats), nPlayersPerTeam), nTeamsPerMatch), nMatches).Named("isStatMissing");
-
-            #endregion
 
             #region Mapping
 
@@ -217,36 +234,6 @@ namespace GGScore
                 }
 
                 Variable.ConstrainTrue(teamPerformance[0] > teamPerformance[1]);
-
-                using (Variable.If(usingStats))
-                {
-                    using (var team = Variable.ForEach(nTeamsPerMatch))
-                    {
-                        using (Variable.ForEach(nPlayersPerTeam))
-                        {
-                            var opponentTeamIndex = Variable.New<int>();
-                            using (Variable.Case(team.Index, 0))
-                            {
-                                opponentTeamIndex.ObservedValue = 1;
-                            }
-
-                            using (Variable.Case(team.Index, 1))
-                            {
-                                opponentTeamIndex.ObservedValue = 0;
-                            }
-
-                            using (Variable.ForEach(nStats))
-                            {
-                                using (Variable.IfNot(isStatMissing[nMatches][nTeamsPerMatch][nPlayersPerTeam][nStats]))
-                                {
-                                    stats[nMatches][nTeamsPerMatch][nPlayersPerTeam][nStats] = Variable.Max(0,
-                                        Variable.GaussianFromMeanAndPrecision((gaussianStatParams[nStats][0] * playerPerformance[nTeamsPerMatch][nPlayersPerTeam] + gaussianStatParams[nStats][1] * (teamPerformance[opponentTeamIndex] / 5)) * matchLengths[nMatches],
-                                            gammaStatParams[nStats] / matchLengths[nMatches]));
-                                }
-                            }
-                        }
-                    }
-                }
             }
 
 
@@ -259,9 +246,9 @@ namespace GGScore
                 ModelName = "TrueSkill2",
                 Compiler =
                 {
-                    IncludeDebugInformation = true,
-                    GenerateInMemory = false,
-                    WriteSourceFiles = true,
+                    IncludeDebugInformation = false,
+                    GenerateInMemory = true,
+                    WriteSourceFiles = false,
                     UseParallelForLoops = true,
                     ShowWarnings = false
                 },
@@ -275,7 +262,6 @@ namespace GGScore
 
             // dictionary keeping tack of the last time a player has played
             var globalPlayerLastPlayed = new Dictionary<int, DateTime>();
-
 
             var abiosIdToBatchIndex = new Dictionary<int, int>();
             var batchIndexToAbiosId = new Dictionary<int, int>();
@@ -294,15 +280,6 @@ namespace GGScore
 
             // holds the mapping between the batch index of a match and the j-th player's skill in that match
             var batchPlayerMatchMapping = new List<int[]>();
-
-            // holds the length of each match in this batch
-            var batchMatchLengths = new double[batchSize];
-
-            // holds the stat counts for the l-th stat for k-th player in the j-th team in the i-th match, index order of this array is [i][j][k][l] / [match][team][player][stat]
-            var batchStats = new double[batchSize][][][];
-
-            // Indicates whether the value for the l-th stat for k-th player in the j-th team in the i-th match is missing, index order of this array is [i][j][k][l] / [match][team][player][stat]
-            var batchStatMissing = new bool[batchSize][][][];
 
             for (var matchIndex = 0; matchIndex < batchSize; ++matchIndex)
             {
@@ -327,7 +304,15 @@ namespace GGScore
                         // if this is the first time that we've ever seen this player, initialize his/her global skill with the prior
                         if (!playerSkill.ContainsKey(player))
                         {
-                            playerSkill[player] = Gaussian.FromMeanAndVariance(playerPriors[player][0], playerPriors[player][1]);
+                            try
+                            {
+                                playerSkill[player] = Gaussian.FromMeanAndVariance(playerPriors[player][0], playerPriors[player][1]);
+                            }
+                            catch (KeyNotFoundException)
+                            {
+                                playerSkill[player] = Gaussian.FromMeanAndVariance(1500, Math.Pow(250, 2));
+                            }
+
                             globalPlayerLastPlayed[player] = match.Date;
                         }
 
@@ -380,50 +365,13 @@ namespace GGScore
 
                     // set playerIndex
                     batchMatches[matchIndex] = teams.Select(t => t.Select(p => abiosIdToBatchIndex[p]).ToArray()).ToArray();
-
-                    // set matchLength
-                    batchMatchLengths[matchIndex] = match.MatchLength;
-
-                    // set stats for each player in the match
-
-                    var statsPerTeam = new double[2][][];
-                    var statsMissing = new bool [2][][];
-
-                    for (var teamIndex = 0; teamIndex < 2; ++teamIndex)
-                    {
-                        var playerStats = new double[5][];
-                        var playerStatsMissing = new bool[5][];
-
-                        for (var playerIndex = 0; playerIndex < 5; ++playerIndex)
-                        {
-                            if (match.PlayerStats != null)
-                            {
-                                playerStats[playerIndex] = match.PlayerStats[teams[teamIndex][playerIndex]].Stats.Select(x => Validate(x)).ToArray();
-                                playerStatsMissing[playerIndex] = match.PlayerStats[teams[teamIndex][playerIndex]].Stats.Select(x => IsValueMissing(x)).ToArray();
-                            }
-                            else
-                            {
-                                playerStats[playerIndex] = new double[numberOfStats];
-                                playerStatsMissing[playerIndex] = Enumerable.Repeat(true, numberOfStats).ToArray();
-                            }
-                        }
-
-                        statsPerTeam[teamIndex] = playerStats;
-                        statsMissing[teamIndex] = playerStatsMissing;
-                    }
-
-                    batchStats[matchIndex] = statsPerTeam;
-                    batchStatMissing[matchIndex] = statsMissing;
                 }
-                catch (Exception e)
+                catch (Exception)
                 {
                     Console.WriteLine($"Error in match: {rawMatches[matchIndex].Id}");
                     throw;
                 }
             }
-
-            var batchGaussianStatParamsPriors = statPriors.Select(x => new[] {Gaussian.FromMeanAndVariance(x["w_p"][0], x["w_p"][1]), Gaussian.FromMeanAndVariance(x["w_o"][0], x["w_o"][1])}).ToArray();
-            var batchGammaStatParamsPriors = statPriors.Select(x => Gamma.FromShapeAndRate(x["v"][0], x["v"][1])).ToArray();
 
             #endregion
 
@@ -439,15 +387,6 @@ namespace GGScore
 
             #endregion
 
-            #region Stats
-
-            stats.ObservedValue = batchStats;
-            isStatMissing.ObservedValue = batchStatMissing;
-            gaussianStatParamsPriors.ObservedValue = batchGaussianStatParamsPriors;
-            gammaStatParamsPriors.ObservedValue = batchGammaStatParamsPriors;
-
-            #endregion
-
             #region Matches
 
             matches.ObservedValue = batchMatches;
@@ -459,7 +398,6 @@ namespace GGScore
             numberOfMatchesPlayedPerPlayer.ObservedValue = batchPlayerMatchCount.ToArray();
             skillPriors.ObservedValue = batchPriors.ToArray();
             playerTimeLapse.ObservedValue = batchPlayerTimeLapse.Select(Enumerable.ToArray).ToArray();
-            matchLengths.ObservedValue = batchMatchLengths;
 
             #endregion
 
@@ -471,75 +409,23 @@ namespace GGScore
 
             // infer the value of the variables
             var inferredSkills = inferenceEngine.Infer<Gaussian[][]>(skills);
-            var posteriors = new Dictionary<string, IDistribution>()
+            var posteriors = new Dictionary<string, Gamma>()
             {
                 {"β posterior", inferenceEngine.Infer<Gamma>(skillClassWidth)},
                 {"γ posterior", inferenceEngine.Infer<Gamma>(skillDynamics)},
                 {"τ posterior", inferenceEngine.Infer<Gamma>(skillSharpnessDecrease)}
             };
-            watch.Stop();
-            Console.WriteLine($"Inference took {watch.Elapsed.TotalMinutes:F} minutes.");
             var lastMatchDate = globalPlayerLastPlayed.Values.Max();
             foreach (var (i, skillOverTime) in inferredSkills.Enumerate())
             {
                 var playerAbiosId = batchIndexToAbiosId[i];
                 var playerLapse = lastMatchDate - globalPlayerLastPlayed[playerAbiosId];
-                playerSkill[playerAbiosId] = Decay(skillOverTime.Last(), playerLapse.Days, gracePeriod);
+                playerSkill[playerAbiosId] = Decay(skillOverTime.Last(), playerLapse.Days, gracePeriod, posteriors["τ posterior"]);
             }
 
             var lastGlobalMatchDate = globalPlayerLastPlayed.Values.Max();
-            double OrderingFunc(KeyValuePair<int, Gaussian> s) => s.Value.GetMean() - (skillMean / skillDeviation) * Math.Sqrt(s.Value.GetVariance());
-            var outputFileName = $"{gameName}_{DateTime.Now:yyyyMMddTHHmmss}";
-            var outputFileContent = new StringBuilder();
-            foreach (var message in parameterMessages) outputFileContent.AppendLine($";{message}");
-            outputFileContent.AppendLine($"\n;Last match date: {lastGlobalMatchDate}");
-            outputFileContent.AppendLine($"\n;Inference took {watch.Elapsed.TotalMinutes:F} minutes.\n");
-            foreach (var (key, posterior) in posteriors)
-            {
-                outputFileContent.AppendLine($";{key}: {posterior}");
-                Console.WriteLine($"{key}: {posterior}");
-            }
 
-            outputFileContent.AppendLine("\n");
-            Console.WriteLine("\n");
-            object[] columns = {"Rank", "Name", "AbiosId", "Prior (mu, sigma)", "Mean", "Uncertainty", "Last played"};
-            Console.WriteLine("{0,5} | {1, -13} ({2}) | {3, 4} | {4, 5} | {5} | {6, 13}", columns);
-            Console.WriteLine(new string('-', 80));
-            outputFileContent.AppendLine(string.Join(';', columns));
-
-            var playerRank = 1;
-            foreach (var (key, value) in playerSkill.OrderByDescending(OrderingFunc))
-            {
-                var playerLapse = lastGlobalMatchDate - globalPlayerLastPlayed[key];
-                object[] row = {playerRank, players[key], key, $"{playerPriors[key][0]}, {Math.Sqrt(playerPriors[key][1]):F0}", value.GetMean(), Math.Sqrt(value.GetVariance()), playerLapse.Days};
-                if (playerRank <= outputLimit) Console.WriteLine("{0, 5}   {1, -15} ({2,5})  {3, 18:0}   {4, 5:F0}  {5,10:F}  {6, 7} days ago", row);
-                outputFileContent.AppendLine(string.Join(';', row));
-                playerRank++;
-            }
-
-            Directory.CreateDirectory(outputFileDir);
-
-            var outputFilePath = Path.Combine(outputFileDir, outputFileName + ".csv");
-            File.WriteAllText(outputFilePath, outputFileContent.ToString());
-
-            // if we export history
-            if (history)
-            {
-                File.WriteAllText(Path.Combine(outputFileDir, outputFileName + "_skills.json"), JsonConvert.SerializeObject(inferredSkills));
-                File.WriteAllText(Path.Combine(outputFileDir, outputFileName + "_id_map.json"), JsonConvert.SerializeObject(batchIndexToAbiosId));
-            }
-
-            Console.WriteLine($"Output saved to: {outputFilePath}");
-        }
-
-        private static double Validate(double? value, double min = 0, double max = double.PositiveInfinity)
-        {
-            return !IsValueMissing(value, min, max) ? value.Value : min;
-        }
-
-        private static bool IsValueMissing(double? value, double min = 0, double max = double.PositiveInfinity)
-        {
-            return value == null || value < min || value > max;
+            return (playerSkill, inferredSkills, posteriors, globalPlayerLastPlayed, lastGlobalMatchDate, batchIndexToAbiosId);
         }
     }
 }

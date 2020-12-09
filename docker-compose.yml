@@ -1,0 +1,11 @@
+version: "3"
+services:
+  api:
+    build: .
+    container_name: ratings-api
+    ports:
+      - 5001:80
+    environment:
+      MONGO_DATABASE: ${MONGO_DATABASE}
+      MONGO_CONNECTION_STRING: ${MONGO_CONNECTION_STRING}
+      MONGO_COLLECTION: ${MONGO_COLLECTION}

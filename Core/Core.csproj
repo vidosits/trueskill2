@@ -8,6 +8,7 @@
     <AssemblyVersion>2.0.0.0</AssemblyVersion>
     <FileVersion>2.0.0.0</FileVersion>
     <Version>2.0.0.0</Version>
+    <RootNamespace>GGScore</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
@@ -29,10 +30,6 @@
   <ItemGroup>
     <None Remove="assemblies\**" />
     <None Remove="release\**" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Folder Include="output\andras" />
   </ItemGroup>
 
   <ItemGroup>

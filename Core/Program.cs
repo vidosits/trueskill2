@@ -4,11 +4,6 @@ using System.IO;
 using System.Linq;
 using CommandLine;
 using Microsoft.ML.Probabilistic.Distributions;
-using Newtonsoft.Json;
-using GGScore.Classes;
-using Microsoft.ML.Probabilistic.Algorithms;
-using Microsoft.ML.Probabilistic.Models;
-using Microsoft.ML.Probabilistic.Models.Attributes;
 
 namespace GGScore
 {
@@ -70,9 +65,6 @@ namespace GGScore
 
         [Option("gracePeriod", Default = 45, HelpText = "Number of days before a player starts to decay.")]
         public double GracePeriod { get; set; }
-
-        [Option("stats", Default = false, HelpText = "Indicates whether heroless stats are enabled.")]
-        public bool StatsEnabled { get; set; }
     }
 
     internal static class Program
@@ -104,8 +96,7 @@ namespace GGScore
                 $"Output limit: {options.Limit}",
                 $"Markov-chain prior directionality: {options.PriorDirectionality}",
                 $"Skill offset: {options.Offset}",
-                $"Grace period: {options.GracePeriod}",
-                $"Stats: {options.StatsEnabled}"
+                $"Grace period: {options.GracePeriod}"
             };
 
             Console.WriteLine("Using the following parameters:");
@@ -116,7 +107,7 @@ namespace GGScore
             }
 
             Console.WriteLine();
-            GGScore.Infer(options.Mean,
+            GGScore.RunFiles(options.Mean,
                 options.Std,
                 b,
                 g,
@@ -132,8 +123,7 @@ namespace GGScore
                 options.History,
                 reversePriors,
                 options.Offset,
-                options.GracePeriod,
-                options.StatsEnabled);
+                options.GracePeriod);
         }
     }
 }
