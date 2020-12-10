@@ -38,7 +38,8 @@ namespace Api.Controllers
                 .Limit(options.Limit)
                 .ToListAsync();
 
-            var convertedMatches = matches.Where(m => m.Rosters.All(r => r.Players.Count == 5)).Select(m => new GGScore.Classes.Match
+            var convertedMatches = matches.Where(m => m.Rosters.All(r => r.Players.Count == 5) &&
+                                                      (m.Rosters[0].RosterId == m.Winner || m.Rosters[1].RosterId == m.Winner) ).Select(m => new GGScore.Classes.Match
             {
                 Id = m.MatchId,
                 Date = m.Series.Start,
