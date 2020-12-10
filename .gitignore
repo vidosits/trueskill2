@@ -2,8 +2,6 @@
 obj/
 bin/
 *.user
-Api/appsettings*.json
-Api/Properties
 .env
 Api/bin
 Api/obj
