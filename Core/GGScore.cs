@@ -75,6 +75,7 @@ namespace GGScore
             // if we export history
             if (history)
             {
+                File.WriteAllText(Path.Combine(outputFileDir, outputFileName + "_ratings.json"),JsonConvert.SerializeObject(playerSkill));
                 File.WriteAllText(Path.Combine(outputFileDir, outputFileName + "_skills.json"), JsonConvert.SerializeObject(inferredSkills));
                 File.WriteAllText(Path.Combine(outputFileDir, outputFileName + "_id_map.json"), JsonConvert.SerializeObject(batchIndexToAbiosId));
             }
@@ -414,16 +415,16 @@ namespace GGScore
             var inferredSkills = inferenceEngine.Infer<Gaussian[][]>(skills);
             var posteriors = new Dictionary<string, Gamma>()
             {
-                {"β posterior", inferenceEngine.Infer<Gamma>(skillClassWidth)},
-                {"γ posterior", inferenceEngine.Infer<Gamma>(skillDynamics)},
-                {"τ posterior", inferenceEngine.Infer<Gamma>(skillSharpnessDecrease)}
+                {"Beta posterior", inferenceEngine.Infer<Gamma>(skillClassWidth)},
+                {"Gamma posterior", inferenceEngine.Infer<Gamma>(skillDynamics)},
+                {"Tau posterior", inferenceEngine.Infer<Gamma>(skillSharpnessDecrease)}
             };
             var lastMatchDate = globalPlayerLastPlayed.Values.Max();
             foreach (var (i, skillOverTime) in inferredSkills.Enumerate())
             {
                 var playerAbiosId = batchIndexToAbiosId[i];
                 var playerLapse = lastMatchDate - globalPlayerLastPlayed[playerAbiosId];
-                playerSkill[playerAbiosId] = Decay(skillOverTime.Last(), playerLapse.Days, gracePeriod, posteriors["τ posterior"]);
+                playerSkill[playerAbiosId] = Decay(skillOverTime.Last(), playerLapse.Days, gracePeriod, posteriors["Tau posterior"]);
             }
 
             var lastGlobalMatchDate = globalPlayerLastPlayed.Values.Max();
