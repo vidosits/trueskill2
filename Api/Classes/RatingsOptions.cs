@@ -4,6 +4,8 @@ public class RatingsOptions
 {
     // Dota: 1, Lol: 2, Csgo: 5
     public int GameId { get; set; }
+    public double Mu { get; set; }
+    public double Sigma { get; set; }
     public Dictionary<string, double[]> PlayerPriors { get; set; }
     public Gamma Beta { get; set; }
     public Gamma Gamma { get; set; }

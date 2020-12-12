@@ -32,7 +32,7 @@ namespace GGScore
             
             var watch = System.Diagnostics.Stopwatch.StartNew();
 
-            var (playerSkill, inferredSkills, posteriors, globalPlayerLastPlayed, lastGlobalMatchDate, batchIndexToAbiosId) = Infer(rawMatches, playerPriors, skillClassWidthPrior, skillDynamicsPrior, skillSharpnessDecreasePrior, skillDamping, numberOfIterations, reversePriors, skillOffset, gracePeriod);
+            var (playerSkill, inferredSkills, posteriors, globalPlayerLastPlayed, lastGlobalMatchDate, batchIndexToAbiosId) = Infer(rawMatches, skillMean, skillDeviation, playerPriors, skillClassWidthPrior, skillDynamicsPrior, skillSharpnessDecreasePrior, skillDamping, numberOfIterations, reversePriors, skillOffset, gracePeriod);
             
             watch.Stop();
             Console.WriteLine($"Inference took {watch.Elapsed.TotalMinutes:F} minutes.");
@@ -60,7 +60,8 @@ namespace GGScore
             foreach (var (key, value) in playerSkill.OrderByDescending(OrderingFunc))
             {
                 var playerLapse = lastGlobalMatchDate - globalPlayerLastPlayed[key];
-                object[] row = {playerRank, players[key], key, $"{playerPriors[key][0]}, {Math.Sqrt(playerPriors[key][1]):F0}", value.GetMean(), Math.Sqrt(value.GetVariance()), playerLapse.Days};
+                var playerPrior = playerPriors.ContainsKey(key) ? playerPriors[key] : new[] {skillMean, skillDeviation};
+                object[] row = {playerRank, players[key], key, $"{playerPrior[0]}, {Math.Sqrt(playerPrior[1]):F0}", value.GetMean(), Math.Sqrt(value.GetVariance()), playerLapse.Days};
                 if (playerRank <= outputLimit) Console.WriteLine("{0, 5}   {1, -15} ({2,5})  {3, 18:0}   {4, 5:F0}  {5,10:F}  {6, 7} days ago", row);
                 outputFileContent.AppendLine(string.Join(';', row));
                 playerRank++;
@@ -90,6 +91,8 @@ namespace GGScore
             Dictionary<int, int> batchIndexToAbiosId)
             Infer(
             Match[] rawMatches,
+            double skillMean,
+            double skillDeviation,
             Dictionary<int, double[]> playerPriors,
             Gamma skillClassWidthPrior,
             Gamma skillDynamicsPrior,
@@ -310,7 +313,7 @@ namespace GGScore
                             }
                             catch (KeyNotFoundException)
                             {
-                                playerSkill[player] = Gaussian.FromMeanAndVariance(1500, Math.Pow(250, 2));
+                                playerSkill[player] = Gaussian.FromMeanAndVariance(skillMean, Math.Pow(skillDeviation, 2));
                             }
 
                             globalPlayerLastPlayed[player] = match.Date;
