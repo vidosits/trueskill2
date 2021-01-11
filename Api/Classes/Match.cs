@@ -20,10 +20,6 @@ namespace Api.Classes
         [JsonPropertyName("series")]
         public Series Series { get; set; }
 
-        [BsonElement("series_id")]
-        [JsonPropertyName("series_id")]
-        public int SeriesId { get; set; }
-
         [BsonElement("winner")]
         [JsonPropertyName("winner")]
         public int Winner { get; set; }
