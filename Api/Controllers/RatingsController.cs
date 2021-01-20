@@ -42,8 +42,11 @@ namespace Api.Controllers
                 .Limit(options.Limit)
                 .ToListAsync();
 
+            var illegalMatches = await _database.GetCollection<Match>("illegal_matches").Find(_ => true).ToListAsync();
+            var illegalMatchIds = illegalMatches.Select(x => x.MatchId);
             var convertedMatches = matches.Where(m => m.Rosters.All(r => r.Players.Count == 5) &&
-                                                      (m.Rosters[0].RosterId == m.Winner || m.Rosters[1].RosterId == m.Winner)).Select(m => new GGScore.Classes.Match
+                                                      (m.Rosters[0].RosterId == m.Winner || m.Rosters[1].RosterId == m.Winner) &&
+                                                      (!illegalMatchIds.Contains(m.MatchId))).Select(m => new GGScore.Classes.Match
             {
                 Id = m.MatchId,
                 Date = m.Series.Start,
