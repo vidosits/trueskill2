@@ -30,7 +30,7 @@ namespace Api.Controllers
             var (skills, posteriors) = await CalculateRatings(options);
             return new Dictionary<string, object>
             {
-                {"ratings", skills.ToDictionary(rating => rating.Key.ToString(), rating => new Gaussian(rating.Value.GetMean(), rating.Value.GetVariance())) },
+                {"ratings", skills.ToDictionary(rating => rating.Key.ToString(), rating => new Gaussian(rating.Value.GetMean(), rating.Value.GetVariance()))},
                 {"posteriors", posteriors.ToDictionary(p => p.Key, p => p.Value.Point)}
             };
         }
@@ -38,15 +38,25 @@ namespace Api.Controllers
         private async Task<(Dictionary<int, Microsoft.ML.Probabilistic.Distributions.Gaussian> skills, Dictionary<string, Microsoft.ML.Probabilistic.Distributions.Gamma> posteriors)> CalculateRatings(RatingsOptions options)
         {
             var collection = _database.GetCollection<Match>(Environment.GetEnvironmentVariable("MONGO_COLLECTION"));
-            var matches = await collection.Find(m => m.Series.Start != null && m.Series.Tier > 0 && m.Rosters.Count == 2 && m.Game.GameId == options.GameId).SortBy(m => m.Series.Start)
+            var illegalMatches = await _database.GetCollection<Match>("illegal_matches").Find(_ => true).ToListAsync();
+            var illegalMatchIds = illegalMatches.Select(x => x.MatchId);
+            var filters = new List<FilterDefinition<Match>>
+            {
+                Builders<Match>.Filter.Nin(m => m.MatchId, illegalMatchIds),
+                Builders<Match>.Filter.Where(m => m.Series.Start != null && m.Series.Tier > 0 && m.Rosters.Count == 2 && m.Game.GameId == options.GameId)
+            };
+
+            if (options.TillDate != null)
+            {
+                filters.Add(Builders<Match>.Filter.Where(m => m.Series.Start < options.TillDate));
+            }
+            
+            var matches = await collection.Find(Builders<Match>.Filter.And(filters))
+                .SortBy(m => m.Series.Start)
                 .Limit(options.Limit)
                 .ToListAsync();
 
-            var illegalMatches = await _database.GetCollection<Match>("illegal_matches").Find(_ => true).ToListAsync();
-            var illegalMatchIds = illegalMatches.Select(x => x.MatchId);
-            var convertedMatches = matches.Where(m => m.Rosters.All(r => r.Players.Count == 5) &&
-                                                      (m.Rosters[0].RosterId == m.Winner || m.Rosters[1].RosterId == m.Winner) &&
-                                                      (!illegalMatchIds.Contains(m.MatchId))).Select(m => new GGScore.Classes.Match
+            var convertedMatches = matches.Where(m => m.Rosters.All(r => r.Players.Count == 5) && (m.Rosters[0].RosterId == m.Winner || m.Rosters[1].RosterId == m.Winner)).Select(m => new GGScore.Classes.Match
             {
                 Id = m.MatchId,
                 Date = m.Series.Start,
