@@ -21,5 +21,6 @@ namespace Api.Classes
     
         public int? Limit { get; set; }
         public DateTime? TillDate { get; set; }
+        public DateTime? FromDate { get; set; }
     }
 }

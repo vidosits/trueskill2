@@ -46,6 +46,11 @@ namespace Api.Controllers
                 Builders<Match>.Filter.Where(m => m.Series.Start != null && m.Series.Tier > 0 && m.Rosters.Count == 2 && m.Game.GameId == options.GameId)
             };
 
+            if (options.FromDate != null)
+            {
+                filters.Add(Builders<Match>.Filter.Where(m => m.Series.Start >= options.FromDate));
+            }
+            
             if (options.TillDate != null)
             {
                 filters.Add(Builders<Match>.Filter.Where(m => m.Series.Start < options.TillDate));
